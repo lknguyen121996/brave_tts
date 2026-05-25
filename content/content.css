@@ -1,0 +1,359 @@
+.brave-tts-highlight {
+  background-color: rgba(255, 213, 79, 0.55) !important;
+  outline: 2px solid rgba(255, 152, 0, 0.8) !important;
+  border-radius: 3px;
+  transition: background-color 0.2s ease;
+}
+
+::highlight(brave-tts-sentence) {
+  background-color: rgba(255, 213, 79, 0.55);
+  color: inherit;
+}
+
+::highlight(brave-tts-word) {
+  background-color: rgba(255, 235, 59, 0.85);
+  color: inherit;
+}
+
+.brave-tts-word {
+  background-color: rgba(255, 235, 59, 0.7) !important;
+  outline: 1px solid rgba(255, 193, 7, 0.9) !important;
+  border-radius: 2px;
+}
+
+.brave-tts-toolbar {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #1a1a2e;
+  color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  user-select: none;
+  flex-wrap: wrap;
+  max-width: min(96vw, 520px);
+}
+
+.brave-tts-rate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.brave-tts-rate .rate-label {
+  font-size: 11px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.brave-tts-rate input[type="range"] {
+  width: 72px;
+  accent-color: #4361ee;
+  cursor: pointer;
+}
+
+.brave-tts-rate .rate-value {
+  min-width: 34px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.brave-tts-rate button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.brave-tts-toolbar button {
+  background: #4361ee;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.brave-tts-toolbar button:hover {
+  background: #3a56d4;
+}
+
+.brave-tts-toolbar button.danger {
+  background: #ef476f;
+}
+
+.brave-tts-toolbar button.danger:hover {
+  background: #d63d61;
+}
+
+.brave-tts-toolbar .status {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.brave-tts-play-here {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 999px;
+  background: #4361ee;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 24px rgba(67, 97, 238, 0.45);
+  white-space: nowrap;
+}
+
+.brave-tts-play-here:hover {
+  background: #3a56d4;
+}
+
+.brave-tts-play-here .icon {
+  font-size: 11px;
+}
+
+.brave-tts-hover-play {
+  position: fixed;
+  z-index: 2147483646;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #4361ee;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 4px 16px rgba(67, 97, 238, 0.45);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.brave-tts-hover-play:hover {
+  background: #3a56d4;
+  transform: scale(1.06);
+}
+
+.brave-tts-line-hover {
+  outline: 1px dashed rgba(67, 97, 238, 0.45);
+  outline-offset: 2px;
+}
+
+.brave-tts-line-active {
+  outline: 2px solid rgba(67, 97, 238, 0.55);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.brave-tts-para-wrap {
+  position: relative;
+  display: flow-root;
+}
+
+.brave-tts-para-play {
+  float: left;
+  position: relative;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 2px 8px 2px 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #4361ee;
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.65;
+  box-shadow: 0 2px 8px rgba(67, 97, 238, 0.35);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.brave-tts-para-wrap:hover .brave-tts-para-play,
+.brave-tts-para-play:focus-visible {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.brave-tts-para-play:hover {
+  background: #3a56d4;
+  opacity: 1;
+}
+
+.brave-tts-para-play:active {
+  transform: scale(0.96);
+}
+
+.brave-tts-para-play.is-active {
+  opacity: 1;
+  background: #ef476f;
+  box-shadow: 0 2px 10px rgba(239, 71, 111, 0.45);
+}
+
+.brave-tts-para-play.is-active:hover {
+  background: #d63d61;
+}
+
+.brave-tts-back-on-track {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 2147483647;
+  transform: translate(-50%, -50%) scale(0.96);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(26, 26, 46, 0.94);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.brave-tts-back-on-track.is-visible {
+  display: flex;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.brave-tts-back-on-track:hover {
+  background: #4361ee;
+}
+
+.brave-tts-back-on-track::before {
+  content: "↩";
+  font-size: 14px;
+}
+
+.brave-tts-gesture-prompt {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 10, 20, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.brave-tts-gesture-card {
+  width: min(92vw, 360px);
+  padding: 22px 20px;
+  border-radius: 16px;
+  background: #1a1a2e;
+  color: #fff;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-align: center;
+}
+
+.brave-tts-gesture-card .title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.brave-tts-gesture-card .desc {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+
+.brave-tts-gesture-start,
+.brave-tts-gesture-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 140px;
+  margin: 4px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.brave-tts-gesture-start {
+  background: #4361ee;
+  color: #fff;
+}
+
+.brave-tts-gesture-start:hover {
+  background: #3a56d4;
+}
+
+.brave-tts-gesture-cancel {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.brave-tts-gesture-cancel:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.brave-tts-docs-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 2147483646;
+  transform: translateX(-50%) translateY(12px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(26, 26, 46, 0.94);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.brave-tts-docs-hint.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

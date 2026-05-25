@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trang test Brave Read Aloud</title>
+  <style>
+    body { font-family: Georgia, serif; max-width: 680px; margin: 40px auto; line-height: 1.8; padding: 0 20px; }
+    h1 { font-family: sans-serif; }
+    article p { margin-bottom: 1.2em; }
+    .note { background: #fff8e1; border: 1px solid #ffcc80; padding: 12px 14px; border-radius: 8px; font-size: 14px; }
+    code { background: #f5f5f5; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Trang thử nghiệm Read Aloud</h1>
+
+  <p class="note">
+    <strong>Cách mở đúng:</strong> chạy
+    <code>node test/serve.js</code>
+    rồi mở <code>http://127.0.0.1:8765/</code>.
+    Reload extension tại <code>chrome://extensions</code> sau mỗi lần sửa code.
+    Mỗi đoạn: <strong>hover 2 giây</strong> để hiện nút ▶ — highlight theo từng câu và từng từ khi đọc.
+  </p>
+
+  <article>
+    <p>Xin chào! Đây là trang web dùng để kiểm tra extension đọc văn bản.</p>
+    <p>Extension sẽ highlight từng câu và tự động cuộn trang xuống khi đọc.</p>
+    <p>Bạn có thể dùng Web Speech API miễn phí hoặc cấu hình Azure Speech / Google Cloud TTS trong popup.</p>
+    <p>Hãy nhấn nút extension và chọn "Đọc trang" để bắt đầu nghe nội dung.</p>
+    <p>Chúc bạn có trải nghiệm đọc thoại tuyệt vời trên mọi trang web!</p>
+  </article>
+</body>
+</html>
