@@ -1,3 +1,2 @@
-2026/05/25-22:56:38.276 1bcf13 Reusing MANIFEST /Users/lk.nguyen/Documents/brave-tts/test/.e2e-profile-ui/Default/Sync Data/LevelDB/MANIFEST-000001
-2026/05/25-22:56:38.276 1bcf13 Recovering log #3
-2026/05/25-22:56:38.276 1bcf13 Reusing old log /Users/lk.nguyen/Documents/brave-tts/test/.e2e-profile-ui/Default/Sync Data/LevelDB/000003.log 
+2026/05/25-23:28:59.169 1cf74f Creating DB /Users/lk.nguyen/Documents/brave-tts/test/.e2e-profile-ui/Default/Sync Data/LevelDB since it was missing.
+2026/05/25-23:28:59.173 1cf74f Reusing MANIFEST /Users/lk.nguyen/Documents/brave-tts/test/.e2e-profile-ui/Default/Sync Data/LevelDB/MANIFEST-000001

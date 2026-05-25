@@ -1,0 +1,5 @@
+.DS_Store
+test/node_modules/
+test/.*/
+test/docs-test-screenshot.png
+test/screenshot*.png

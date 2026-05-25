@@ -48,7 +48,7 @@ function startServer() {
     const box = await paragraph.boundingBox();
     if (!box) throw new Error("Paragraph box not found");
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(700);
     await page.waitForSelector(".brave-tts-hover-play", { timeout: 5000 });
     await page.click(".brave-tts-hover-play");
     await page.waitForSelector(".brave-tts-toolbar", { timeout: 8000 });
@@ -67,7 +67,7 @@ function startServer() {
       const b = await loc.boundingBox();
       if (!b) throw new Error(`Paragraph ${index} box not found`);
       await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(700);
       await page.waitForSelector(".brave-tts-hover-play", { timeout: 5000 });
       await page.click(".brave-tts-hover-play");
       await page.waitForTimeout(300);
@@ -86,7 +86,7 @@ function startServer() {
     const p1 = page.locator("article p").nth(1);
     const box1 = await p1.boundingBox();
     await page.mouse.move(box1.x + box1.width / 2, box1.y + box1.height / 2);
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(700);
     await page.waitForSelector(".brave-tts-hover-play", { timeout: 5000 });
     await page.click(".brave-tts-hover-play");
     await page.waitForSelector(".brave-tts-toolbar", { timeout: 8000 });

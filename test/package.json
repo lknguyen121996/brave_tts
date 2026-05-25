@@ -1,6 +1,11 @@
 {
   "name": "brave-tts-test",
   "private": true,
+  "scripts": {
+    "test": "node run-ui-test.js",
+    "test:docs": "node run-docs-test.js",
+    "serve": "node serve.js"
+  },
   "dependencies": {
     "playwright": "^1.52.0"
   }
