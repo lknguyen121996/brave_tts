@@ -8,86 +8,95 @@
 </head>
 <body>
   <header>
-    <h1>Brave Read Aloud</h1>
-    <p>Đọc to, highlight &amp; tự cuộn trang</p>
-    <p class="hint">Hover nửa giây trên dòng/đoạn để hiện ▶. Google Docs: thêm double-click để đọc ngay.</p>
+    <div class="header-row">
+      <h1>Brave Read Aloud</h1>
+      <select id="uiLang" class="ui-lang-select" aria-label="Interface language">
+        <option value="vi" data-i18n="popup.lang.vi">Tiếng Việt</option>
+        <option value="en" data-i18n="popup.lang.en">English</option>
+      </select>
+    </div>
+    <p data-i18n="popup.subtitle">Đọc to, highlight &amp; tự cuộn trang</p>
+    <p class="hint" data-i18n="popup.headerHint">Hover nửa giây trên dòng/đoạn để hiện ▶. Google Docs: thêm double-click để đọc ngay.</p>
   </header>
 
   <section class="controls">
-    <button id="btnPlay" class="primary">▶ Đọc trang</button>
-    <button id="btnStop" class="danger">■ Dừng</button>
+    <button id="btnPlay" class="primary" data-i18n="popup.playPage">▶ Đọc trang</button>
+    <button id="btnStop" class="danger" data-i18n="popup.stop">■ Dừng</button>
   </section>
 
   <section class="field">
-    <label for="provider">Nguồn TTS</label>
+    <label for="provider" data-i18n="popup.ttsProvider">Nguồn TTS</label>
     <select id="provider">
-      <option value="webspeech">Web Speech (miễn phí, không cần key)</option>
-      <option value="azure">Azure Speech (free tier)</option>
-      <option value="google">Google Cloud TTS (free tier)</option>
+      <option value="webspeech" data-i18n="popup.provider.webspeech">Web Speech (miễn phí, không cần key)</option>
+      <option value="edge" data-i18n="popup.provider.edge">Edge TTS (miễn phí, giọng Read Aloud)</option>
+      <option value="azure" data-i18n="popup.provider.azure">Azure Speech (free tier)</option>
+      <option value="google" data-i18n="popup.provider.google">Google Cloud TTS (free tier)</option>
     </select>
   </section>
 
   <section class="field">
-    <label for="lang">Ngôn ngữ</label>
+    <label for="lang" data-i18n="popup.readLang">Ngôn ngữ đọc</label>
     <select id="lang">
-      <option value="vi-VN">Tiếng Việt</option>
-      <option value="en-US">English (US)</option>
-      <option value="en-GB">English (UK)</option>
-      <option value="ja-JP">日本語</option>
-      <option value="ko-KR">한국어</option>
-      <option value="zh-CN">中文</option>
+      <option value="" data-i18n="popup.readLangPlaceholder">— Chọn ngôn ngữ —</option>
+      <option value="vi-VN" data-i18n="popup.lang.viVN">Tiếng Việt</option>
+      <option value="en-US" data-i18n="popup.lang.enUS">English (US)</option>
+      <option value="en-GB" data-i18n="popup.lang.enGB">English (UK)</option>
+      <option value="ja-JP" data-i18n="popup.lang.jaJP">日本語</option>
+      <option value="ko-KR" data-i18n="popup.lang.koKR">한국어</option>
+      <option value="zh-CN" data-i18n="popup.lang.zhCN">中文</option>
     </select>
+    <p class="hint" data-i18n="popup.readLangHint">Chọn ngôn ngữ trước — danh sách giọng sẽ được tải theo ngôn ngữ này.</p>
   </section>
 
   <section class="field">
-    <label for="rate">Tốc độ đọc: <span id="rateValue">1.0</span>x</label>
+    <label for="rate"><span data-i18n="popup.rateLabel">Tốc độ đọc:</span> <span id="rateValue">1.0</span>x</label>
     <input type="range" id="rate" min="0.5" max="3" step="0.1" value="1" />
-    <p class="hint">Có thể chỉnh thêm bằng thanh công cụ khi đang đọc.</p>
+    <p class="hint" data-i18n="popup.rateHint">Có thể chỉnh thêm bằng thanh công cụ khi đang đọc.</p>
   </section>
 
-  <section class="field">
-    <label for="voice">Giọng đọc (Web Speech)</label>
-    <select id="voice"><option value="">Mặc định hệ thống</option></select>
-    <p class="hint">Danh sách giọng lấy từ tab đang mở. Mở trang web trước, rồi mở lại popup nếu trống.</p>
+  <section class="field" id="webspeechVoiceSection" hidden>
+    <label for="voice" data-i18n="popup.voice">Giọng đọc</label>
+    <select id="voice"><option value="" data-i18n="voice.selectLangFirst">Chọn ngôn ngữ trước</option></select>
+    <p class="hint" data-i18n="popup.voiceWebspeechHint">Danh sách giọng lấy từ tab đang mở. Mở trang web trước, rồi mở lại popup nếu trống.</p>
   </section>
 
-  <details id="azureSettings">
-    <summary>Azure Speech API</summary>
+  <section class="field" id="edgeVoiceSection" hidden>
+    <label for="edgeVoice" data-i18n="popup.edgeVoice">Giọng đọc</label>
+    <select id="edgeVoice"><option value="" data-i18n="voice.selectLangFirst">Chọn ngôn ngữ trước</option></select>
+    <p class="hint" data-i18n="popup.edgeVoiceHint">Giọng neural giống Microsoft Edge Read Aloud — không cần API key.</p>
+  </section>
+
+  <details id="azureSettings" hidden>
+    <summary data-i18n="popup.azureSummary">Azure Speech API</summary>
     <div class="field">
-      <label for="azureKey">Subscription Key</label>
-      <input type="password" id="azureKey" placeholder="Azure Speech key" />
+      <label for="azureKey" data-i18n="popup.azureKey">Subscription Key</label>
+      <input type="password" id="azureKey" data-i18n-placeholder="popup.azureKeyPlaceholder" placeholder="Azure Speech key" />
     </div>
     <div class="field">
-      <label for="azureRegion">Region</label>
+      <label for="azureRegion" data-i18n="popup.azureRegion">Region</label>
       <input type="text" id="azureRegion" value="southeastasia" />
     </div>
     <div class="field">
-      <label for="azureVoice">Voice</label>
-      <select id="azureVoice">
-        <option value="vi-VN-HoaiMyNeural">vi-VN-HoaiMyNeural</option>
-        <option value="vi-VN-NamMinhNeural">vi-VN-NamMinhNeural</option>
-        <option value="en-US-JennyNeural">en-US-JennyNeural</option>
-      </select>
+      <label for="azureVoice" data-i18n="popup.azureVoice">Giọng đọc</label>
+      <select id="azureVoice"><option value="" data-i18n="voice.selectLangAndKey">Chọn ngôn ngữ và nhập key trước</option></select>
     </div>
   </details>
 
-  <details id="googleSettings">
-    <summary>Google Cloud TTS</summary>
+  <details id="googleSettings" hidden>
+    <summary data-i18n="popup.googleSummary">Google Cloud TTS</summary>
     <div class="field">
-      <label for="googleKey">API Key</label>
-      <input type="password" id="googleKey" placeholder="Google Cloud API key" />
+      <label for="googleKey" data-i18n="popup.googleKey">API Key</label>
+      <input type="password" id="googleKey" data-i18n-placeholder="popup.googleKeyPlaceholder" placeholder="Google Cloud API key" />
     </div>
     <div class="field">
-      <label for="googleVoice">Voice</label>
-      <select id="googleVoice">
-        <option value="vi-VN-Neural2-A">vi-VN-Neural2-A</option>
-        <option value="vi-VN-Neural2-D">vi-VN-Neural2-D</option>
-        <option value="en-US-Neural2-F">en-US-Neural2-F</option>
-      </select>
+      <label for="googleVoice" data-i18n="popup.googleVoice">Giọng đọc</label>
+      <select id="googleVoice"><option value="" data-i18n="voice.selectLangAndKey">Chọn ngôn ngữ và nhập key trước</option></select>
     </div>
   </details>
 
   <p id="status" class="status"></p>
+  <script src="../shared/i18n.js"></script>
+  <script src="../shared/edge-tts-client.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

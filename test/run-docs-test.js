@@ -102,7 +102,7 @@ const PROFILE = path.join(__dirname, ".e2e-profile-docs");
   console.log("After start attempt:", after);
 
   const status = after.status;
-  if (after.toolbar && (status.includes("Đang đọc") || status.includes("Hoàn thành"))) {
+  if (after.toolbar && (/Đang đọc|Reading/.test(status) || /Hoàn thành|Complete/.test(status))) {
     console.log("\nPASS: Extension started reading Google Doc");
     await page.waitForTimeout(4000);
   } else {

@@ -2,13 +2,22 @@
   "manifest_version": 3,
   "name": "Brave Read Aloud",
   "version": "1.0.0",
-  "description": "Đọc văn bản trang web với highlight, tự cuộn — TTS miễn phí (Web Speech / Azure / Google)",
-  "permissions": ["activeTab", "storage", "scripting", "contextMenus"],
-  "host_permissions": ["<all_urls>", "https://*.tts.speech.microsoft.com/*", "https://texttospeech.googleapis.com/*"],
+  "description": "Đọc văn bản trang web với highlight, tự cuộn — TTS miễn phí (Web Speech / Edge / Azure / Google)",
+  "permissions": ["activeTab", "storage", "scripting", "contextMenus", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["<all_urls>", "https://*.tts.speech.microsoft.com/*", "https://texttospeech.googleapis.com/*", "https://speech.platform.bing.com/*", "wss://speech.platform.bing.com/*"],
   "web_accessible_resources": [
     {
       "resources": ["content/docs-page.js"],
       "matches": ["https://docs.google.com/*"]
+    },
+    {
+      "resources": [
+        "background/edge-synth.html",
+        "background/edge-synth.js",
+        "background/edge-tts-session-rules.js",
+        "shared/edge-tts-client.js"
+      ],
+      "matches": ["<all_urls>"]
     }
   ],
   "action": {
@@ -30,7 +39,7 @@
     },
     {
       "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
+      "js": ["shared/i18n.js", "content/content.js"],
       "css": ["content/content.css"],
       "run_at": "document_idle"
     }

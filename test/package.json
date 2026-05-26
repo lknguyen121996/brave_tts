@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "test": "node run-ui-test.js",
+    "test:edge": "node run-edge-test.js",
     "test:docs": "node run-docs-test.js",
     "serve": "node serve.js"
   },

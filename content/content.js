@@ -39,6 +39,7 @@
     docsA11yStyleNode: null,
     docsA11yPollDone: false,
     docsScreenReaderTried: false,
+    edgeAudioCache: new Map(),
   };
 
   const DOCS_A11Y_RECT_SELECTOR =
@@ -48,14 +49,70 @@
   const PARAGRAPH_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, td, pre";
 
   const SETTINGS_FIELDS = [
-    "provider", "lang", "rate", "voice",
+    "uiLang", "provider", "lang", "rate", "voice",
     "azureKey", "azureRegion", "azureVoice",
     "googleKey", "googleVoice",
+    "edgeVoice",
   ];
+
+  function uiLang() {
+    return braveTtsNormalizeUiLang(STATE.settings?.uiLang);
+  }
+
+  function t(key, params) {
+    return braveTtsT(key, uiLang(), params);
+  }
+
+  function syncContentUi() {
+    if (STATE.toolbar) {
+      const bar = STATE.toolbar;
+      const statusEl = bar.querySelector(".status");
+      const currentStatus = statusEl?.textContent || "";
+      const rateLabel = bar.querySelector(".rate-label");
+      const slowerBtn = bar.querySelector('[data-action="slower"]');
+      const fasterBtn = bar.querySelector('[data-action="faster"]');
+      const stopBtn = bar.querySelector('[data-action="stop"]');
+      if (rateLabel) {
+        rateLabel.textContent = t("content.toolbarRate");
+        rateLabel.title = t("content.toolbarRate");
+      }
+      if (slowerBtn) slowerBtn.title = t("content.toolbarSlower");
+      if (fasterBtn) fasterBtn.title = t("content.toolbarFaster");
+      if (stopBtn) stopBtn.textContent = t("content.toolbarStop");
+      updatePauseButton();
+      if (currentStatus === braveTtsT("content.statusReading", "vi") ||
+          currentStatus === braveTtsT("content.statusReading", "en")) {
+        setStatus(t("content.statusReading"));
+      } else if (currentStatus === braveTtsT("content.statusPaused", "vi") ||
+                 currentStatus === braveTtsT("content.statusPaused", "en")) {
+        setStatus(t("content.statusPaused"));
+      } else if (currentStatus === braveTtsT("content.toolbarReady", "vi") ||
+                 currentStatus === braveTtsT("content.toolbarReady", "en")) {
+        setStatus(t("content.toolbarReady"));
+      }
+    }
+
+    if (STATE.backOnTrackEl) {
+      STATE.backOnTrackEl.textContent = t("content.backOnTrack");
+      STATE.backOnTrackEl.title = t("content.backOnTrackTitle");
+    }
+
+    if (STATE.hoverPlayBtn) {
+      STATE.hoverPlayBtn.title = t("content.readFromHere");
+      STATE.hoverPlayBtn.setAttribute("aria-label", t("content.readFromHere"));
+    }
+
+    if (STATE.playHereBtn) {
+      STATE.playHereBtn.innerHTML =
+        `<span class="icon">▶</span> ${t("content.readFromHere")}`;
+    }
+  }
 
   const MIN_RATE = 0.5;
   const MAX_RATE = 3;
   const HOVER_PLAY_DELAY_MS = 500;
+  const EDGE_PREFETCH_AHEAD = 10;
+  const EDGE_AUDIO_CACHE_MAX = 16;
 
   function clampRate(rate) {
     return Math.min(MAX_RATE, Math.max(MIN_RATE, Number(rate) || 1));
@@ -898,8 +955,8 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "brave-tts-hover-play";
-    btn.title = STATE.running ? "Đọc từ đây" : "Đọc từ đây";
-    btn.setAttribute("aria-label", "Đọc từ đây");
+    btn.title = t("content.readFromHere");
+    btn.setAttribute("aria-label", t("content.readFromHere"));
     btn.textContent = STATE.running ? "↪" : "▶";
     btn.style.left = `${Math.max(8, rect.left - 34)}px`;
     btn.style.top = `${Math.max(8, rect.top + rect.height / 2 - 14)}px`;
@@ -922,7 +979,7 @@
 
     if (isGoogleDocs()) {
       if (!buildGoogleDocsSegments()) {
-        showGoogleDocsHint("Chưa đọc được Docs. Cuộn qua đoạn cần đọc rồi thử lại.");
+        showGoogleDocsHint(t("content.docsNotReady"));
         return;
       }
       let startInfo = resolveReadStartFromElement(target);
@@ -931,7 +988,7 @@
         startInfo = resolveGoogleDocsStartFromPoint(coords.x, coords.y);
       }
       if (!startInfo) {
-        showGoogleDocsHint("Không xác định được dòng đọc.");
+        showGoogleDocsHint(t("content.docsLineUnknown"));
         return;
       }
       if (STATE.running) {
@@ -944,12 +1001,12 @@
     }
 
     if (!buildSegments()) {
-      alert("Không tìm thấy văn bản để đọc trên trang này.");
+      alert(t("content.noText"));
       return;
     }
     const startInfo = resolveReadStartFromElement(target);
     if (!startInfo) {
-      alert("Không xác định được vị trí đọc.");
+      alert(t("content.noReadPosition"));
       return;
     }
     if (STATE.running) {
@@ -996,13 +1053,13 @@
   function readFromParagraph(blockEl) {
     if (!blockEl) return;
     if (!buildSegments()) {
-      alert("Không tìm thấy văn bản để đọc trên trang này.");
+      alert(t("content.noText"));
       return;
     }
 
     const startInfo = resolveReadStartFromElement(blockEl);
     if (!startInfo) {
-      alert("Không xác định được vị trí đọc trong đoạn này.");
+      alert(t("content.noReadPositionInBlock"));
       return;
     }
 
@@ -1393,8 +1450,11 @@
 
   function showGesturePrompt(settings, startInfo = { index: 0, textOverride: null }, blockEl = null) {
     hideGesturePrompt();
+    if (settings?.uiLang) {
+      STATE.settings = { ...STATE.settings, uiLang: settings.uiLang };
+    }
     if (!buildSegments()) {
-      alert("Không tìm thấy văn bản để đọc trên trang này.");
+      alert(t("content.noText"));
       return;
     }
 
@@ -1403,9 +1463,9 @@
     overlay.innerHTML = `
       <div class="brave-tts-gesture-card">
         <p class="title">Brave Read Aloud</p>
-        <p class="desc">Brave cần một lần bấm trên trang để bật giọng đọc.</p>
-        <button type="button" class="brave-tts-gesture-start">▶ Bắt đầu đọc</button>
-        <button type="button" class="brave-tts-gesture-cancel">Hủy</button>
+        <p class="desc">${t("content.gestureDesc")}</p>
+        <button type="button" class="brave-tts-gesture-start">${t("content.gestureStart")}</button>
+        <button type="button" class="brave-tts-gesture-cancel">${t("content.gestureCancel")}</button>
       </div>
     `;
 
@@ -1435,7 +1495,7 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "brave-tts-play-here";
-    btn.innerHTML = '<span class="icon">▶</span> Đọc từ đây';
+    btn.innerHTML = `<span class="icon">▶</span> ${t("content.readFromHere")}`;
     btn.style.left = `${Math.min(x, window.innerWidth - 160)}px`;
     btn.style.top = `${Math.max(12, y - 48)}px`;
     btn.addEventListener("click", (e) => {
@@ -1470,7 +1530,7 @@
     const prevLength = STATE.segments.length;
     buildSegments();
     if (STATE.segments.length > prevLength) {
-      setStatus("Đang đọc...");
+      setStatus(t("content.statusReading"));
     }
   }
 
@@ -1485,6 +1545,7 @@
 
   function abortReadingSession() {
     STATE.readGeneration += 1;
+    STATE.edgeAudioCache.clear();
     cancelCurrentSpeech();
     if (STATE.abortController) {
       STATE.abortController.abort();
@@ -1506,17 +1567,18 @@
       if (requestId !== STATE.playRequestId) return;
 
       if (!buildSegments()) {
-        alert("Không tìm thấy văn bản để đọc trên trang này.");
+        alert(t("content.noText"));
         return;
       }
 
       const resolvedStart = blockEl ? resolveReadStartFromElement(blockEl) : startInfo;
       if (!resolvedStart) {
-        alert("Không xác định được vị trí đọc.");
+        alert(t("content.noReadPosition"));
         return;
       }
 
       STATE.settings = { ...(resolvedSettings || STATE.settings), rate: clampRate((resolvedSettings || STATE.settings).rate || 1) };
+      syncContentUi();
       STATE.running = true;
       STATE.paused = false;
       STATE.autoFollow = true;
@@ -1526,7 +1588,14 @@
       ensureToolbar();
       updatePauseButton();
       setActiveParagraphButton(blockEl || null);
-      setStatus("Đang đọc...");
+      setStatus(t("content.statusReading"));
+      if (resolvedSettings?.provider === "edge") {
+        ensureEdgeSynthFrame().catch(() => {});
+        const firstText =
+          resolvedStart.textOverride || STATE.segments[resolvedStart.index]?.text;
+        if (firstText) prefetchEdgeAudio(firstText, resolvedSettings);
+        prefetchEdgeAhead(resolvedStart.index, resolvedSettings);
+      }
       readFromIndex(resolvedStart.index, resolvedStart.textOverride, requestId);
     };
 
@@ -1556,7 +1625,7 @@
 
   async function handleReadFromPoint(x, y, { jumpIfRunning = false, showButton = false, target = null } = {}) {
     if (!buildSegments()) {
-      alert("Không tìm thấy văn bản để đọc trên trang này.");
+      alert(t("content.noText"));
       return;
     }
 
@@ -1566,7 +1635,7 @@
       if (block) startInfo = resolveReadStartFromElement(block);
     }
     if (!startInfo) {
-      alert("Không xác định được vị trí đọc tại điểm này.");
+      alert(t("content.noReadPositionAtPoint"));
       return;
     }
 
@@ -1585,13 +1654,13 @@
 
   async function handleReadFromSelection({ showButton = false } = {}) {
     if (!buildSegments()) {
-      alert("Không tìm thấy văn bản để đọc trên trang này.");
+      alert(t("content.noText"));
       return;
     }
 
     const startInfo = resolveReadStartFromSelection();
     if (!startInfo) {
-      alert("Không xác định được vị trí đọc trong vùng chọn.");
+      alert(t("content.noReadPositionInSelection"));
       return;
     }
 
@@ -1607,8 +1676,7 @@
     document.querySelector(".brave-tts-docs-hint")?.remove();
     const hint = document.createElement("div");
     hint.className = "brave-tts-docs-hint";
-    hint.textContent = message ||
-      "Docs canvas: hover nửa giây trên dòng hoặc double-click. Nếu chưa đọc được, bật Tools → Accessibility → Turn on screen reader support.";
+    hint.textContent = message || t("content.docsHintDefault");
     document.body.appendChild(hint);
     setTimeout(() => hint.classList.add("is-visible"), 30);
     setTimeout(() => {
@@ -1690,8 +1758,8 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "brave-tts-back-on-track";
-    btn.textContent = "Back on track";
-    btn.title = "Quay lại vị trí đang đọc và tự cuộn theo";
+    btn.textContent = t("content.backOnTrack");
+    btn.title = t("content.backOnTrackTitle");
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1866,16 +1934,16 @@
     const bar = document.createElement("div");
     bar.className = "brave-tts-toolbar";
     bar.innerHTML = `
-      <span class="status">Sẵn sàng</span>
+      <span class="status">${t("content.toolbarReady")}</span>
       <div class="brave-tts-rate">
-        <label class="rate-label" title="Tốc độ đọc">Tốc độ</label>
-        <button type="button" data-action="slower" title="Chậm hơn">−</button>
+        <label class="rate-label" title="${t("content.toolbarRate")}">${t("content.toolbarRate")}</label>
+        <button type="button" data-action="slower" title="${t("content.toolbarSlower")}">−</button>
         <input type="range" data-action="rate" min="${MIN_RATE}" max="${MAX_RATE}" step="0.1" value="1" />
-        <button type="button" data-action="faster" title="Nhanh hơn">+</button>
+        <button type="button" data-action="faster" title="${t("content.toolbarFaster")}">+</button>
         <span class="rate-value">1.0x</span>
       </div>
-      <button data-action="pause">Tạm dừng</button>
-      <button data-action="stop" class="danger">Dừng</button>
+      <button data-action="pause">${t("content.toolbarPause")}</button>
+      <button data-action="stop" class="danger">${t("content.toolbarStop")}</button>
     `;
     bar.addEventListener("click", (e) => {
       const action = e.target.closest("button")?.dataset.action;
@@ -1928,7 +1996,7 @@
 
   function updatePauseButton() {
     const btn = STATE.toolbar?.querySelector('[data-action="pause"]');
-    if (btn) btn.textContent = STATE.paused ? "Tiếp tục" : "Tạm dừng";
+    if (btn) btn.textContent = STATE.paused ? t("content.toolbarResume") : t("content.toolbarPause");
   }
 
   function togglePause() {
@@ -1937,9 +2005,9 @@
     updatePauseButton();
     if (STATE.paused) {
       cancelCurrentSpeech();
-      setStatus("Đã tạm dừng");
+      setStatus(t("content.statusPaused"));
     } else {
-      setStatus("Đang đọc...");
+      setStatus(t("content.statusReading"));
       readFromIndex(STATE.currentIndex, null, STATE.playRequestId);
     }
   }
@@ -1964,7 +2032,7 @@
 
   async function speakWebSpeech(text, rate, voiceName, lang, segment) {
     if (!window.speechSynthesis) {
-      throw new Error("Trình duyệt không hỗ trợ Web Speech");
+      throw new Error(t("error.webSpeechUnsupported"));
     }
 
     prepareSpeechEngine();
@@ -1978,10 +2046,13 @@
       utter.rate = clampRate(rate);
       utter.lang = lang || "vi-VN";
 
-      const voice = voices.find((v) => v.name === voiceName) ||
-        voices.find((v) => v.lang.startsWith((lang || "vi-VN").split("-")[0])) ||
-        voices.find((v) => v.lang.startsWith("vi")) ||
-        voices[0];
+      const selectedLang = lang || "vi-VN";
+      const langBase = selectedLang.split("-")[0];
+      const voice = voiceName
+        ? voices.find((v) => v.name === voiceName)
+        : voices.find((v) => v.lang === selectedLang) ||
+          voices.find((v) => v.lang.startsWith(langBase)) ||
+          null;
       if (voice) utter.voice = voice;
 
       const watchdog = setTimeout(() => {
@@ -2019,8 +2090,9 @@
 
   async function speakAzure(text, settings, segment) {
     const token = STATE.speakToken;
-    const { azureKey, azureRegion, azureVoice, rate } = settings;
-    const ssml = `<speak version='1.0' xml:lang='vi-VN'>
+    const { azureKey, azureRegion, azureVoice, rate, lang } = settings;
+    const ssmlLang = lang || "vi-VN";
+    const ssml = `<speak version='1.0' xml:lang='${ssmlLang}'>
       <voice name='${azureVoice || "vi-VN-HoaiMyNeural"}'>
         <prosody rate='${clampRate(rate)}'>${escapeXml(text)}</prosody>
       </voice>
@@ -2077,6 +2149,159 @@
     URL.revokeObjectURL(url);
   }
 
+  function ensureEdgeSynthFrame() {
+    let frame = document.getElementById("brave-tts-edge-synth");
+    if (frame?.dataset.edgeReady === "1") return Promise.resolve(frame);
+
+    if (frame?.dataset.edgePending === "1") {
+      return new Promise((resolve) => {
+        const waitForReady = (event) => {
+          if (event.data?.type !== "EDGE_SYNTH_READY" || event.source !== frame.contentWindow) return;
+          window.removeEventListener("message", waitForReady);
+          frame.dataset.edgeReady = "1";
+          frame.dataset.edgePending = "";
+          resolve(frame);
+        };
+        window.addEventListener("message", waitForReady);
+      });
+    }
+
+    frame = document.createElement("iframe");
+    frame.id = "brave-tts-edge-synth";
+    frame.hidden = true;
+    frame.dataset.edgePending = "1";
+    frame.src = chrome.runtime.getURL("background/edge-synth.html");
+    document.documentElement.appendChild(frame);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        frame.dataset.edgeReady = "1";
+        frame.dataset.edgePending = "";
+        window.removeEventListener("message", onReadyMsg);
+        resolve(frame);
+      };
+      const onReadyMsg = (event) => {
+        if (event.data?.type !== "EDGE_SYNTH_READY" || event.source !== frame.contentWindow) return;
+        done();
+      };
+      window.addEventListener("message", onReadyMsg);
+      frame.addEventListener("load", done, { once: true });
+    });
+  }
+
+  async function synthesizeViaEdgeFrame({ text, voice, lang, rate }) {
+    const id = crypto.randomUUID();
+    const frame = await ensureEdgeSynthFrame();
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        reject(new Error("Edge TTS: timeout"));
+      }, 60000);
+
+      const onMessage = (event) => {
+        if (event.data?.type !== "EDGE_SYNTHESIZE_RESULT" || event.data.id !== id) return;
+        window.removeEventListener("message", onMessage);
+        clearTimeout(timer);
+        if (!event.data.ok) {
+          reject(new Error(event.data.error || "Edge TTS failed"));
+          return;
+        }
+        if (event.data.audioBuffer) {
+          resolve({ audioBytes: new Uint8Array(event.data.audioBuffer) });
+          return;
+        }
+        if (event.data.audioBase64) {
+          const binary = atob(event.data.audioBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          resolve({ audioBytes: bytes });
+          return;
+        }
+        reject(new Error("Edge TTS: no audio"));
+      };
+
+      window.addEventListener("message", onMessage);
+      frame.contentWindow.postMessage(
+        { type: "EDGE_SYNTHESIZE", id, text, voice, lang, rate },
+        "*"
+      );
+    });
+  }
+
+  function edgeAudioCacheKey(text, settings) {
+    const { edgeVoice, rate, lang } = settings;
+    return `${edgeVoice || "vi-VN-HoaiMyNeural"}|${lang || "vi-VN"}|${clampRate(rate)}|${text}`;
+  }
+
+  function trimEdgeAudioCache() {
+    while (STATE.edgeAudioCache.size > EDGE_AUDIO_CACHE_MAX) {
+      const oldestKey = STATE.edgeAudioCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      STATE.edgeAudioCache.delete(oldestKey);
+    }
+  }
+
+  function prefetchEdgeAhead(fromIndex, settings, count = EDGE_PREFETCH_AHEAD) {
+    if (settings?.provider !== "edge") return;
+    for (let offset = 1; offset <= count; offset++) {
+      const idx = fromIndex + offset;
+      if (idx >= STATE.segments.length) break;
+      prefetchEdgeAudio(STATE.segments[idx].text, settings);
+    }
+  }
+
+  function prefetchEdgeAudio(text, settings) {
+    if (!text || settings?.provider !== "edge") return;
+    const key = edgeAudioCacheKey(text, settings);
+    if (STATE.edgeAudioCache.has(key)) return;
+    STATE.edgeAudioCache.set(
+      key,
+      fetchEdgeAudioBytes(text, settings).catch((err) => {
+        STATE.edgeAudioCache.delete(key);
+        throw err;
+      })
+    );
+    trimEdgeAudioCache();
+  }
+
+  async function fetchEdgeAudioBytes(text, settings) {
+    const { edgeVoice, rate, lang } = settings;
+    const resp = await synthesizeViaEdgeFrame({
+      text,
+      voice: edgeVoice || "vi-VN-HoaiMyNeural",
+      lang: lang || "vi-VN",
+      rate: clampRate(rate),
+    });
+    return resp.audioBytes;
+  }
+
+  async function speakEdge(text, settings, segment) {
+    const token = STATE.speakToken;
+    const key = edgeAudioCacheKey(text, settings);
+    let bytesPromise = STATE.edgeAudioCache.get(key);
+    if (bytesPromise) STATE.edgeAudioCache.delete(key);
+    else bytesPromise = fetchEdgeAudioBytes(text, settings);
+
+    let bytes;
+    try {
+      bytes = await bytesPromise;
+    } catch {
+      bytes = await fetchEdgeAudioBytes(text, settings);
+    }
+
+    if (token !== STATE.speakToken) throw new Error("aborted");
+
+    const blob = new Blob([bytes], { type: "audio/mp3" });
+    const url = URL.createObjectURL(blob);
+    prefetchEdgeAhead(STATE.currentIndex, settings);
+    await playAudio(url, clampRate(settings.rate), token, segment, text);
+    URL.revokeObjectURL(url);
+  }
+
   function playAudio(url, rate, token, segment, spokenText) {
     return new Promise((resolve, reject) => {
       const audio = new Audio(url);
@@ -2087,6 +2312,12 @@
         if (token !== STATE.speakToken || !segment || !spokenText || !audio.duration) return;
         const charEnd = Math.ceil((audio.currentTime / audio.duration) * spokenText.length);
         highlightSpokenProgress(segment, spokenText, charEnd);
+      };
+
+      audio.onplaying = () => {
+        if (STATE.settings?.provider === "edge") {
+          prefetchEdgeAhead(STATE.currentIndex, STATE.settings);
+        }
       };
 
       audio.onended = () => {
@@ -2118,10 +2349,15 @@
   async function speakSegment(text, segment) {
     const { provider, rate, voice, lang, azureKey, googleKey } = STATE.settings;
 
-    if (provider === "azure" && azureKey) {
+    if (provider === "azure") {
+      if (!azureKey?.trim()) throw new Error(t("error.azureKeyMissing"));
       await speakAzure(text, STATE.settings, segment);
-    } else if (provider === "google" && googleKey) {
+    } else if (provider === "google") {
+      if (!googleKey?.trim()) throw new Error(t("error.googleKeyMissing"));
       await speakGoogle(text, STATE.settings, segment);
+    } else if (provider === "edge") {
+      if (!STATE.settings.edgeVoice?.trim()) throw new Error(t("error.edgeVoiceMissing"));
+      await speakEdge(text, STATE.settings, segment);
     } else {
       await speakWebSpeech(text, rate, voice, lang, segment);
     }
@@ -2147,6 +2383,10 @@
       clearWordHighlight();
 
       if (!isActivePlayRequest(requestId)) break;
+
+      if (STATE.settings.provider === "edge") {
+        prefetchEdgeAhead(i, STATE.settings);
+      }
 
       try {
         while (isActivePlayRequest(requestId) && !STATE.paused) {
@@ -2176,18 +2416,20 @@
           return;
         }
         console.error("[Brave TTS]", err);
-        setStatus(`Lỗi: ${err.message}`);
+        setStatus(`${t("content.statusErrorPrefix")}${err.message}`);
         return;
       }
 
       if (!isActivePlayRequest(requestId)) break;
 
       segmentOverride = null;
-      await sleep(80);
+      if (STATE.settings.provider !== "edge") {
+        await sleep(80);
+      }
     }
 
     if (isActivePlayRequest(requestId) && generation === STATE.readGeneration) {
-      setStatus("Hoàn thành");
+      setStatus(t("content.statusComplete"));
       setTimeout(() => {
         if (requestId === STATE.playRequestId) stopReading();
       }, 2000);
@@ -2239,7 +2481,7 @@
       if (!buildGoogleDocsSegments()) {
         await new Promise((r) => setTimeout(r, 250));
         if (!buildGoogleDocsSegments()) {
-          showGoogleDocsHint("Chưa đọc được Docs. Cuộn qua đoạn cần đọc rồi double-click lại.");
+          showGoogleDocsHint(t("content.docsScrollRetry"));
           return;
         }
       }
@@ -2247,7 +2489,7 @@
       let startInfo = resolveGoogleDocsStartFromSelection() ||
         resolveGoogleDocsStartFromPoint(clientX, clientY);
       if (!startInfo) {
-        showGoogleDocsHint("Double-click trực tiếp lên chữ trong document.");
+        showGoogleDocsHint(t("content.docsDoubleClickText"));
         return;
       }
 
@@ -2274,7 +2516,7 @@
     if (msg.type === "READ_FROM_HERE") {
       (async () => {
         if (!buildSegments()) {
-          alert("Không tìm thấy văn bản để đọc trên trang này.");
+          alert(t("content.noText"));
           sendResponse({ ok: false });
           return;
         }
@@ -2292,7 +2534,7 @@
         }
 
         if (!startInfo) {
-          alert("Hãy click chuột phải vào vị trí muốn bắt đầu đọc.");
+          alert(t("content.rightClickToStart"));
           sendResponse({ ok: false });
           return;
         }

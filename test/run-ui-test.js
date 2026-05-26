@@ -56,7 +56,7 @@ function startServer() {
 
     const status = ((await page.locator(".brave-tts-toolbar .status").textContent()) || "").trim();
     console.log("Status after hover play:", status);
-    if (!status.includes("Đang đọc") && !status.includes("Hoàn thành")) {
+    if (!/Đang đọc|Reading/.test(status) && !/Hoàn thành|Complete/.test(status)) {
       throw new Error(`Unexpected status: ${status}`);
     }
 
@@ -79,7 +79,7 @@ function startServer() {
     await page.waitForTimeout(2000);
 
     const statusFinal = ((await page.locator(".brave-tts-toolbar .status").textContent()) || "").trim();
-    if (!statusFinal.includes("Đang đọc")) throw new Error("Expected single stream still reading");
+    if (!/Đang đọc|Reading/.test(statusFinal)) throw new Error("Expected single stream still reading");
 
     console.log("PASS: hover play jump works");
 

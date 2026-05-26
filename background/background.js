@@ -1,4 +1,7 @@
+importScripts("../shared/i18n.js", "edge-tts-session-rules.js");
+
 const DEFAULT_SETTINGS = {
+  uiLang: "vi",
   provider: "webspeech",
   rate: 1,
   lang: "vi-VN",
@@ -8,24 +11,47 @@ const DEFAULT_SETTINGS = {
   azureVoice: "vi-VN-HoaiMyNeural",
   googleKey: "",
   googleVoice: "vi-VN-Neural2-A",
+  edgeVoice: "vi-VN-HoaiMyNeural",
 };
 
 function ensureContextMenu() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: "brave-tts-read-from-here",
-      title: "Đọc từ đây (Brave Read Aloud)",
-      contexts: ["page", "selection"],
+  chrome.storage.sync.get(["uiLang"], ({ uiLang }) => {
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: "brave-tts-read-from-here",
+        title: braveTtsT("contextMenu.readFromHere", uiLang),
+        contexts: ["page", "selection"],
+      });
     });
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.set(DEFAULT_SETTINGS);
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  ensureEdgeTtsWsHeaders().catch(() => {});
+  if (reason === "install") {
+    chrome.storage.sync.set(DEFAULT_SETTINGS);
+  } else {
+    chrome.storage.sync.get(Object.keys(DEFAULT_SETTINGS), (existing) => {
+      const merged = { ...DEFAULT_SETTINGS };
+      for (const key of Object.keys(DEFAULT_SETTINGS)) {
+        if (existing[key] !== undefined && existing[key] !== "") {
+          merged[key] = existing[key];
+        }
+      }
+      chrome.storage.sync.set(merged);
+    });
+  }
   ensureContextMenu();
 });
 
-chrome.runtime.onStartup.addListener(ensureContextMenu);
+chrome.runtime.onStartup.addListener(() => {
+  ensureEdgeTtsWsHeaders().catch(() => {});
+  ensureContextMenu();
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.uiLang) ensureContextMenu();
+});
 
 function injectDocsAnnotate(tabId) {
   if (!tabId) return;
