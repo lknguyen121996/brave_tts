@@ -1,24 +1,32 @@
 .brave-tts-highlight {
-  background-color: rgba(255, 213, 79, 0.55) !important;
-  outline: 2px solid rgba(255, 152, 0, 0.8) !important;
+  background-color: #000 !important;
+  color: #fff !important;
   border-radius: 3px;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.brave-tts-highlight * {
+  color: #fff !important;
 }
 
 ::highlight(brave-tts-sentence) {
-  background-color: rgba(255, 213, 79, 0.55);
-  color: inherit;
+  background-color: #000;
+  color: #fff;
 }
 
 ::highlight(brave-tts-word) {
-  background-color: rgba(255, 235, 59, 0.85);
-  color: inherit;
+  background-color: #fff;
+  color: #000;
 }
 
 .brave-tts-word {
-  background-color: rgba(255, 235, 59, 0.7) !important;
-  outline: 1px solid rgba(255, 193, 7, 0.9) !important;
+  background-color: #fff !important;
+  color: #000 !important;
   border-radius: 2px;
+}
+
+.brave-tts-word * {
+  color: #000 !important;
 }
 
 .brave-tts-toolbar {
@@ -171,58 +179,10 @@
   border-radius: 2px;
 }
 
-.brave-tts-para-wrap {
-  position: relative;
-  display: flow-root;
-}
-
-.brave-tts-para-play {
-  float: left;
-  position: relative;
-  z-index: 1000;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin: 2px 8px 2px 0;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: #4361ee;
-  color: #fff;
-  font-size: 9px;
-  line-height: 1;
-  cursor: pointer;
-  pointer-events: auto;
-  opacity: 0.65;
-  box-shadow: 0 2px 8px rgba(67, 97, 238, 0.35);
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
-}
-
-.brave-tts-para-wrap:hover .brave-tts-para-play,
-.brave-tts-para-play:focus-visible {
-  opacity: 1;
-  transform: scale(1.05);
-}
-
-.brave-tts-para-play:hover {
-  background: #3a56d4;
-  opacity: 1;
-}
-
-.brave-tts-para-play:active {
-  transform: scale(0.96);
-}
-
-.brave-tts-para-play.is-active {
-  opacity: 1;
-  background: #ef476f;
-  box-shadow: 0 2px 10px rgba(239, 71, 111, 0.45);
-}
-
-.brave-tts-para-play.is-active:hover {
-  background: #d63d61;
+.kix-lineview.brave-tts-line-active,
+.kix-lineview-content.brave-tts-line-active {
+  outline: 2px solid rgba(67, 97, 238, 0.65);
+  outline-offset: 3px;
 }
 
 .brave-tts-back-on-track {

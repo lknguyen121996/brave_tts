@@ -38,7 +38,14 @@
       "run_at": "document_start"
     },
     {
+      "matches": ["https://docs.google.com/document/*"],
+      "js": ["shared/i18n.js", "content/content.js", "content/docs-content.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["<all_urls>"],
+      "exclude_matches": ["https://docs.google.com/document/*"],
       "js": ["shared/i18n.js", "content/content.js"],
       "css": ["content/content.css"],
       "run_at": "document_idle"

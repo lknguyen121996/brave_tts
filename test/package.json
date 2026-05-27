@@ -3,8 +3,10 @@
   "private": true,
   "scripts": {
     "test": "node run-ui-test.js",
+    "test:ui": "node run-ui-test.js",
     "test:edge": "node run-edge-test.js",
     "test:docs": "node run-docs-test.js",
+    "test:all": "node run-all.js",
     "serve": "node serve.js"
   },
   "dependencies": {

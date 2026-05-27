@@ -1,6 +1,24 @@
 (function () {
-  const current = document.currentScript;
-  const extId = current?.dataset?.extId || current?.getAttribute("data-ext-id");
+  function resolveExtensionId() {
+    const current = document.currentScript;
+    if (current) {
+      const fromDataset = current.dataset?.extId || current.getAttribute("data-ext-id");
+      if (fromDataset) return fromDataset;
+      if (current.src) {
+        try {
+          const url = new URL(current.src);
+          const fromQuery = url.searchParams.get("extId");
+          if (fromQuery) return fromQuery;
+          if (url.protocol === "chrome-extension:" && url.host) return url.host;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return null;
+  }
+
+  const extId = resolveExtensionId();
   if (extId) {
     try {
       window._docs_annotate_canvas_by_ext = extId;
@@ -8,6 +26,8 @@
       /* ignore */
     }
   }
+
+  if (window.__braveTtsDocsPage) return;
 
   function digClosureText(src, seen) {
     if (!src || seen.has(src)) return null;

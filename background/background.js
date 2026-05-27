@@ -53,28 +53,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.uiLang) ensureContextMenu();
 });
 
-function injectDocsAnnotate(tabId) {
-  if (!tabId) return;
-  chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: (extId) => {
-      try {
-        window._docs_annotate_canvas_by_ext = extId;
-      } catch {
-        /* ignore */
-      }
-    },
-    args: [chrome.runtime.id],
-  }).catch(() => {});
-}
-
-chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-  if (info.status !== "loading" && info.status !== "complete") return;
-  if (!tab.url?.includes("docs.google.com/document/")) return;
-  injectDocsAnnotate(tabId);
-});
-
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "brave-tts-read-from-here" || !tab?.id) return;
   chrome.tabs.sendMessage(tab.id, {

@@ -4,7 +4,7 @@ Extension Chrome/Brave đọc văn bản trang web — highlight theo câu/từ,
 
 ## Tính năng
 
-- **TTS:** Web Speech API (mặc định, miễn phí), Azure Speech, Google Cloud TTS
+- **TTS:** Web Speech API (mặc định, miễn phí), **Edge TTS**, Azure Speech, Google Cloud TTS
 - **Đọc từ vị trí:** hover **500ms** trên dòng/đoạn → nút ▶; đang đọc thì hiện ↪ để nhảy
 - **Highlight & auto-scroll** theo tiến độ đọc
 - **Toolbar** trên trang: pause, dừng, chỉnh tốc độ, “Back on track” khi tự cuộn bị lệch
@@ -39,6 +39,7 @@ Extension Chrome/Brave đọc văn bản trang web — highlight theo câu/từ,
 | Provider | Ghi chú |
 |----------|---------|
 | **Web Speech** | Không cần API key; giọng phụ thuộc OS/trình duyệt |
+| **Edge TTS** | Miễn phí, giọng Microsoft Read Aloud (mặc định) |
 | **Azure** | Key + region + voice (free tier có hạn) |
 | **Google Cloud** | API key + voice |
 
@@ -49,13 +50,15 @@ Cài đặt lưu qua `chrome.storage.sync`.
 ```
 brave-tts/
 ├── manifest.json
-├── background/background.js      # Context menu, inject Docs annotate
+├── background/background.js      # Context menu, message routing
 ├── content/
-│   ├── content.js                # Logic TTS, highlight, hover, Docs pipeline
+│   ├── content.js                # Logic TTS, highlight, hover (chung)
+│   ├── docs-content.js           # Hook Google Docs (chỉ load trên docs.google.com)
 │   ├── content.css
 │   ├── docs-bootstrap.js         # Inject sớm trên docs.google.com
 │   └── docs-page.js              # Closure/SVG extract (page context)
 ├── popup/                        # UI cài đặt & điều khiển
+├── shared/                       # edge-tts-client.js, i18n.js
 ├── icons/
 └── test/                         # E2E Playwright (xem test/README.md)
 ```
@@ -66,7 +69,9 @@ brave-tts/
 cd test
 npm install
 npm test              # Trang HTML local (hover, jump, back-on-track)
+npm run test:edge     # Edge TTS iframe
 npm run test:docs     # Google Docs (cần mạng)
+npm run test:all      # Chạy cả 3
 npm run serve         # http://127.0.0.1:8765/ — thử tay
 ```
 

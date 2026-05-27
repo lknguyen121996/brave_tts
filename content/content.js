@@ -9,17 +9,13 @@
     currentIndex: 0,
     settings: {},
     highlightEl: null,
-    wordEls: [],
     toolbar: null,
     abortController: null,
     currentAudio: null,
     speakToken: 0,
-    playHereBtn: null,
     lastPointer: null,
     readGeneration: 0,
-    paragraphButtonsEnabled: false,
     playRequestId: 0,
-    activeParagraphBtn: null,
     hoverTarget: null,
     hoverTimer: null,
     hoverPlayBtn: null,
@@ -40,11 +36,11 @@
     docsA11yPollDone: false,
     docsScreenReaderTried: false,
     edgeAudioCache: new Map(),
+    nextAudioUrl: null,
+    playbackAudio: null,
   };
 
-  const DOCS_A11Y_RECT_SELECTOR =
-    ".kix-canvas-tile-content svg>g>rect[aria-label], " +
-    ".kix-canvas-tile-content svg>g[role=paragraph]>rect[aria-label]";
+  const docsHooks = { active: false };
 
   const PARAGRAPH_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, td, pre";
 
@@ -53,6 +49,11 @@
     "azureKey", "azureRegion", "azureVoice",
     "googleKey", "googleVoice",
     "edgeVoice",
+  ];
+
+  const PLAYBACK_PROFILE_KEYS = [
+    "provider", "lang", "voice", "edgeVoice", "azureVoice", "googleVoice",
+    "azureKey", "azureRegion", "googleKey",
   ];
 
   function uiLang() {
@@ -102,17 +103,51 @@
       STATE.hoverPlayBtn.setAttribute("aria-label", t("content.readFromHere"));
     }
 
-    if (STATE.playHereBtn) {
-      STATE.playHereBtn.innerHTML =
-        `<span class="icon">▶</span> ${t("content.readFromHere")}`;
-    }
   }
 
   const MIN_RATE = 0.5;
   const MAX_RATE = 3;
   const HOVER_PLAY_DELAY_MS = 500;
-  const EDGE_PREFETCH_AHEAD = 10;
-  const EDGE_AUDIO_CACHE_MAX = 16;
+  const EDGE_PREFETCH_AHEAD = 5;
+  const EDGE_AUDIO_CACHE_MAX = 24;
+  const EDGE_HOVER_PREFETCH_AHEAD = 2;
+
+  function revokeNextAudioUrl() {
+    if (STATE.nextAudioUrl) {
+      URL.revokeObjectURL(STATE.nextAudioUrl);
+      STATE.nextAudioUrl = null;
+    }
+  }
+
+  function setNextAudioUrl(bytes) {
+    revokeNextAudioUrl();
+    STATE.nextAudioUrl = URL.createObjectURL(new Blob([bytes], { type: "audio/mp3" }));
+  }
+
+  function takeNextAudioUrl() {
+    const url = STATE.nextAudioUrl;
+    STATE.nextAudioUrl = null;
+    return url;
+  }
+
+  function prepareNextEdgeAudioUrl(settings, token) {
+    if (settings?.provider !== "edge") return;
+    const nextText = STATE.segments[STATE.currentIndex + 1]?.text;
+    if (!nextText) return;
+
+    const key = edgeAudioCacheKey(nextText, settings);
+    const cached = STATE.edgeAudioCache.get(key);
+    if (cached instanceof Uint8Array && cached.length) {
+      if (token === STATE.speakToken) setNextAudioUrl(cached);
+      return;
+    }
+
+    getEdgeAudioBytes(nextText, settings, { priority: false })
+      .then((bytes) => {
+        if (token === STATE.speakToken && bytes?.length) setNextAudioUrl(bytes);
+      })
+      .catch(() => {});
+  }
 
   function clampRate(rate) {
     return Math.min(MAX_RATE, Math.max(MIN_RATE, Number(rate) || 1));
@@ -134,616 +169,13 @@
   }
 
   function isGoogleDocs() {
-    return location.hostname === "docs.google.com";
-  }
-
-  function getGoogleDocsEditor() {
-    return document.querySelector(".kix-appview-editor") ||
-      document.querySelector("#docs-editor-container") ||
-      document.querySelector(".docs-editor") ||
-      document.querySelector(".kix-rotatingtilemanager-content") ||
-      document.querySelector(".docs-editor-container .kix-appview-editor") ||
-      document.querySelector(".kix-page-content-wrapper")?.closest(".kix-appview-editor") ||
-      document.querySelector("[contenteditable='true'][role='textbox']");
-  }
-
-  function getGoogleDocsSurfaceRoots() {
-    const roots = new Set();
-    const editor = getGoogleDocsEditor();
-    if (editor) roots.add(editor);
-    document.querySelectorAll(
-      "#docs-editor-container, .kix-rotatingtilemanager, .kix-page, .kix-page-content-wrapper"
-    ).forEach((el) => roots.add(el));
-    return [...roots];
-  }
-
-  function isInGoogleDocsEditor(el) {
-    if (!el) return false;
-    for (const root of getGoogleDocsSurfaceRoots()) {
-      if (root.contains(el)) return true;
-    }
-    return Boolean(el.closest?.(
-      ".kix-page, .kix-page-content-wrapper, .kix-canvas-tile-content, .kix-rotatingtilemanager, .kix-lineview-content"
-    )) || Boolean(el.matches?.(DOCS_A11Y_RECT_SELECTOR));
-  }
-
-  function normalizeDocsText(text) {
-    return (text || "")
-      .replace(/\u200b/g, "")
-      .replace(/\r/g, "")
-      .replace(/\s+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n");
-  }
-
-  function splitDocsIntoSegments(fullText) {
-    const segments = [];
-    const parts = fullText.match(/[^\n.!?。！？]+[.!?。！？]?/g) || [fullText];
-    let searchFrom = 0;
-
-    for (const part of parts) {
-      const text = part.trim();
-      if (text.length < 2) continue;
-      const idx = fullText.indexOf(part, searchFrom);
-      if (idx === -1) continue;
-      segments.push({
-        text,
-        globalStart: idx,
-        globalEnd: idx + part.length,
-        isGoogleDocs: true,
-      });
-      searchFrom = idx + part.length;
-    }
-
-    if (!segments.length && fullText.trim().length >= 2) {
-      segments.push({
-        text: fullText.trim(),
-        globalStart: 0,
-        globalEnd: fullText.length,
-        isGoogleDocs: true,
-      });
-    }
-
-    return segments;
-  }
-
-  function buildGoogleDocsLineSegments(entries) {
-    const segments = [];
-
-    entries.forEach((entry) => {
-      const lineText = entry.text.trim();
-      if (lineText.length < 2) return;
-
-      const parts = lineText.match(/[^.!?。！？]+[.!?。！？]?/g) || [lineText];
-      let localFrom = 0;
-
-      for (const part of parts) {
-        const text = part.trim();
-        if (text.length < 2) continue;
-        const localIdx = entry.text.indexOf(part, localFrom);
-        if (localIdx < 0) continue;
-        segments.push({
-          text,
-          globalStart: entry.start + localIdx,
-          globalEnd: entry.start + localIdx + part.length,
-          isGoogleDocs: true,
-          lineEl: entry.el,
-        });
-        localFrom = localIdx + part.length;
-      }
-    });
-
-    return segments;
-  }
-
-  function getGoogleDocsHiddenTextContainer() {
-    const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
-    try {
-      const body = iframe?.contentDocument?.body;
-      if (body && normalizeDocsText(body.innerText || "").trim().length >= 2) {
-        return body;
-      }
-    } catch {
-      /* cross-origin or unavailable */
-    }
-    return null;
-  }
-
-  function ensureDocsA11yStyles() {
-    if (STATE.docsA11yStyleNode?.isConnected) return STATE.docsA11yStyleNode;
-
-    const style = document.createElement("style");
-    style.id = "brave-tts-docs-a11y";
-    style.textContent = [
-      ".kix-canvas-tile-content{pointer-events:none!important;}",
-      ".kix-canvas-tile-content svg>g>rect[aria-label]{pointer-events:all!important;}",
-      ".kix-canvas-tile-content svg>g[role=paragraph]>rect[aria-label]{pointer-events:all!important;}",
-    ].join("\n");
-    (document.head || document.documentElement).appendChild(style);
-    STATE.docsA11yStyleNode = style;
-    return style;
-  }
-
-  function setDocsA11yHitTesting(enabled) {
-    const style = ensureDocsA11yStyles();
-    style.disabled = !enabled;
-  }
-
-  function getDocsA11yRects(root = document) {
-    ensureDocsA11yStyles();
-    return [...root.querySelectorAll(DOCS_A11Y_RECT_SELECTOR)].filter((rect) => {
-      const label = rect.getAttribute("aria-label");
-      return typeof label === "string" && label.trim().length > 0;
-    });
-  }
-
-  function joinA11yRectText(parts) {
-    return normalizeDocsText(parts.join("")).replace(/\s+/g, " ").trim();
-  }
-
-  function groupA11yRectsIntoLines(rects) {
-    const items = rects.map((rect) => {
-      const box = rect.getBoundingClientRect();
-      return {
-        rect,
-        text: normalizeDocsText(rect.getAttribute("aria-label") || ""),
-        top: box.top,
-        left: box.left,
-        height: box.height,
-      };
-    }).filter((item) => item.text.length > 0);
-
-    items.sort((a, b) => a.top - b.top || a.left - b.left);
-
-    const lines = [];
-    let current = null;
-    const LINE_THRESHOLD = 6;
-
-    for (const item of items) {
-      if (!current || Math.abs(item.top - current.top) > LINE_THRESHOLD) {
-        current = { top: item.top, height: item.height, items: [] };
-        lines.push(current);
-      }
-      current.items.push(item);
-      current.top = (current.top + item.top) / 2;
-    }
-
-    return lines.map((line) => {
-      line.items.sort((a, b) => a.left - b.left);
-      const text = joinA11yRectText(line.items.map((item) => item.text));
-      const lineEl = line.items[0]?.rect?.closest?.(".kix-lineview, .kix-lineview-content") ||
-        line.items[0]?.rect;
-      return {
-        text,
-        rects: line.items.map((item) => item.rect),
-        a11yItems: line.items,
-        lineEl,
-      };
-    }).filter((line) => line.text.length >= 2);
-  }
-
-  function requestDocsPageExtract() {
-    let payload = null;
-    const eventId = `brave-tts-docs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const onResult = (event) => {
-      if (event.detail?.eventId === eventId) payload = event.detail;
-    };
-    window.addEventListener("brave-tts-docs-text", onResult);
-    window.dispatchEvent(new CustomEvent("brave-tts-docs-extract", { detail: { eventId } }));
-    window.removeEventListener("brave-tts-docs-text", onResult);
-    return payload;
-  }
-
-  function injectDocsPageBridgeRetry() {
-    if (!isGoogleDocs() || document.querySelector("script[data-brave-tts-docs-page='1']")) return;
-    const extId = chrome.runtime?.id;
-    if (!extId) return;
-
-    const script = document.createElement("script");
-    script.src = chrome.runtime.getURL("content/docs-page.js");
-    script.dataset.braveTtsDocsPage = "1";
-    script.dataset.extId = extId;
-    (document.head || document.documentElement).appendChild(script);
-  }
-
-  function collectGoogleDocsClosureContent() {
-    injectDocsPageBridgeRetry();
-    const extracted = requestDocsPageExtract();
-    const rawText = normalizeDocsText(extracted?.text || "");
-    if (rawText.trim().length < 2) return null;
-
-    const entries = [];
-    let fullText = "";
-    let cursor = 0;
-    const lines = rawText.split("\n");
-
-    lines.forEach((line) => {
-      const text = line.trim();
-      if (text.length < 2) return;
-      if (fullText.length > 0) {
-        fullText += "\n";
-        cursor += 1;
-      }
-      entries.push({
-        el: null,
-        rects: null,
-        a11yItems: null,
-        textNode: null,
-        start: cursor,
-        end: cursor + text.length,
-        text,
-        isClosure: true,
-      });
-      fullText += text;
-      cursor += text.length;
-    });
-
-    if (fullText.trim().length < 2) return null;
-    return { fullText, entries, plainMode: false, mode: "closure" };
-  }
-
-  function resolveGoogleDocsStartFromPointClosure(x, y) {
-    if (!STATE.docsEntries?.length) return null;
-
-    const surface = document.querySelector(
-      ".kix-page-paginated, .kix-rotatingtilemanager-content, .kix-appview-editor, #docs-editor-container"
-    );
-    if (!surface) {
-      return resolveGoogleDocsStartFromOffset(STATE.docsEntries[0].start);
-    }
-
-    const rect = surface.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (y - rect.top) / Math.max(1, rect.height)));
-    const index = Math.min(
-      STATE.docsEntries.length - 1,
-      Math.floor(ratio * STATE.docsEntries.length)
-    );
-    return resolveGoogleDocsStartFromOffset(STATE.docsEntries[index].start);
-  }
-
-  function scrollToDocsClosureEntry(entry) {
-    if (!entry || !STATE.docsEntries?.length) return;
-    const surface = document.querySelector(
-      ".kix-page-paginated, .kix-rotatingtilemanager-content, .kix-appview-editor"
-    );
-    if (!surface) return;
-
-    const idx = STATE.docsEntries.indexOf(entry);
-    if (idx < 0) return;
-
-    const rect = surface.getBoundingClientRect();
-    const ratio = idx / Math.max(1, STATE.docsEntries.length - 1);
-    const targetY = window.scrollY + rect.top + ratio * rect.height - window.innerHeight * 0.35;
-
-    STATE.lastProgrammaticScrollAt = Date.now();
-    window.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
-  }
-
-  function collectGoogleDocsA11yContent() {
-    const containers = [
-      document.querySelector(".kix-rotatingtilemanager-content"),
-      getGoogleDocsEditor(),
-      document.querySelector("#docs-editor-container"),
-    ].filter(Boolean);
-
-    for (const container of containers) {
-      const rects = getDocsA11yRects(container);
-      if (rects.length < 2) continue;
-
-      const lines = groupA11yRectsIntoLines(rects);
-      if (!lines.length) continue;
-
-      const entries = [];
-      let fullText = "";
-      let cursor = 0;
-
-      lines.forEach((line, index) => {
-        if (index > 0) {
-          fullText += "\n";
-          cursor += 1;
-        }
-        entries.push({
-          el: line.lineEl,
-          rects: line.rects,
-          a11yItems: line.a11yItems,
-          textNode: null,
-          start: cursor,
-          end: cursor + line.text.length,
-          text: line.text,
-          isA11y: true,
-        });
-        fullText += line.text;
-        cursor += line.text.length;
-      });
-
-      if (fullText.trim().length >= 2) {
-        return { fullText, entries, plainMode: false, mode: "a11y" };
-      }
-    }
-
-    return null;
-  }
-
-  function findA11yLineEntryAtPoint(x, y) {
-    if (!STATE.docsEntries?.length) return null;
-
-    for (const entry of STATE.docsEntries) {
-      if (!entry.isA11y) continue;
-
-      let minTop = Infinity;
-      let maxBottom = -Infinity;
-      let minLeft = Infinity;
-      let maxRight = -Infinity;
-
-      for (const rect of entry.rects || []) {
-        const box = rect.getBoundingClientRect();
-        if (!box.width && !box.height) continue;
-        minTop = Math.min(minTop, box.top);
-        maxBottom = Math.max(maxBottom, box.bottom);
-        minLeft = Math.min(minLeft, box.left);
-        maxRight = Math.max(maxRight, box.right);
-        if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) {
-          return entry;
-        }
-      }
-
-      if (minTop !== Infinity &&
-          y >= minTop - 3 &&
-          y <= maxBottom + 3 &&
-          x >= minLeft - 8 &&
-          x <= maxRight + 8) {
-        return entry;
-      }
-    }
-
-    return null;
-  }
-
-  function getDocsA11yRectAtPoint(x, y) {
-    setDocsA11yHitTesting(true);
-    const el = document.elementFromPoint(x, y);
-    setDocsA11yHitTesting(false);
-    if (el?.matches?.(DOCS_A11Y_RECT_SELECTOR)) return el;
-    return null;
-  }
-
-  function getGoogleDocsHoverTarget(x, y) {
-    const lineEntry = findA11yLineEntryAtPoint(x, y);
-    if (lineEntry) return lineEntry.el || lineEntry.rects?.[0] || null;
-
-    const a11yRect = getDocsA11yRectAtPoint(x, y);
-    if (a11yRect) {
-      return a11yRect.closest(".kix-lineview, .kix-lineview-content") || a11yRect;
-    }
-
-    const surface = document.querySelector(
-      ".kix-page-paginated, .kix-rotatingtilemanager-content, .kix-appview-editor, #docs-editor-container"
-    );
-    if (surface) {
-      const rect = surface.getBoundingClientRect();
-      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-        return surface;
-      }
-    }
-
-    const el = document.elementFromPoint(x, y);
-    if (!el || !isInGoogleDocsEditor(el)) return null;
-    return el.closest(".kix-lineview-content, .kix-lineview");
-  }
-
-  function createA11yTextRange(rect, text, startOffset = 0, endOffset = text.length) {
-    if (!rect || !text) return null;
-
-    try {
-      startOffset = Math.max(0, Math.min(startOffset, text.length));
-      endOffset = Math.max(startOffset, Math.min(endOffset, text.length));
-      if (startOffset >= endOffset) {
-        endOffset = Math.min(text.length, startOffset + 1);
-      }
-
-      const content = document.createTextNode(text);
-      const svgText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      const transform = rect.getAttribute("transform") || "";
-      const font = rect.getAttribute("data-font-css") || "";
-      const elementX = rect.getAttribute("x");
-      const elementY = rect.getAttribute("y");
-      if (elementX) svgText.setAttribute("x", elementX);
-      if (elementY) svgText.setAttribute("y", elementY);
-      svgText.appendChild(content);
-      svgText.dataset.braveTtsImposter = "1";
-      svgText.style.setProperty("all", "initial", "important");
-      svgText.style.setProperty("transform", transform, "important");
-      svgText.style.setProperty("font", font, "important");
-      svgText.style.setProperty("text-anchor", "start", "important");
-
-      const parent = rect.parentNode;
-      if (!parent) return null;
-      parent.appendChild(svgText);
-
-      const elementRect = rect.getBoundingClientRect();
-      const textRect = svgText.getBoundingClientRect();
-      const yOffset = ((elementRect.top - textRect.top) + (elementRect.bottom - textRect.bottom)) * 0.5;
-      svgText.style.setProperty("transform", `translate(0px,${yOffset}px) ${transform}`, "important");
-
-      const range = document.createRange();
-      range.setStart(content, startOffset);
-      range.setEnd(content, endOffset);
-
-      svgText.style.setProperty("pointer-events", "none", "important");
-      svgText.style.setProperty("opacity", "0", "important");
-      return range;
-    } catch {
-      return null;
-    }
-  }
-
-  function getA11yRangeForEntry(entry, globalStart, globalEnd) {
-    if (!entry?.isA11y || !entry.text) return null;
-
-    const localStart = Math.max(0, globalStart - entry.start);
-    const localEnd = Math.min(entry.text.length, globalEnd - entry.start);
-    const anchorRect = entry.rects?.[0];
-    if (!anchorRect) return null;
-
-    return createA11yTextRange(anchorRect, entry.text, localStart, localEnd);
-  }
-
-  function tryEnableDocsScreenReader() {
-    if (STATE.docsScreenReaderTried) return;
-    STATE.docsScreenReaderTried = true;
-
-    setTimeout(() => {
-      try {
-        const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
-        const doc = iframe?.contentDocument;
-        const target = doc?.activeElement || doc?.body;
-        if (!target) return;
-
-        const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
-        target.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "t",
-          code: "KeyT",
-          altKey: !isMac,
-          shiftKey: !isMac,
-          ctrlKey: isMac,
-          metaKey: false,
-          bubbles: true,
-          cancelable: true,
-        }));
-      } catch {
-        /* best effort */
-      }
-    }, 2500);
-  }
-
-  function scheduleDocsA11yPoll() {
-    if (STATE.docsA11yPollDone) return;
-
-    let attempts = 0;
-    const tick = () => {
-      if (attempts++ > 60) {
-        STATE.docsA11yPollDone = true;
-        return;
-      }
-
-      if (getDocsA11yRects(document).length >= 2) {
-        buildGoogleDocsSegments();
-        STATE.docsA11yPollDone = true;
-        return;
-      }
-
-      setTimeout(tick, 500);
-    };
-
-    tick();
-  }
-
-  function collectGoogleDocsContent() {
-    const a11yCollected = collectGoogleDocsA11yContent();
-    if (a11yCollected) return a11yCollected;
-
-    const closureCollected = collectGoogleDocsClosureContent();
-    if (closureCollected) return closureCollected;
-
-    const editor = getGoogleDocsEditor();
-    const hiddenText = getGoogleDocsHiddenTextContainer();
-    const containers = [
-      editor,
-      document.querySelector("#docs-editor-container"),
-      document.querySelector(".kix-rotatingtilemanager-content"),
-    ].filter(Boolean);
-
-    const entries = [];
-    let fullText = "";
-    let plainMode = false;
-
-    const appendFromElements = (elements, { joiner = "" } = {}) => {
-      entries.length = 0;
-      fullText = "";
-      let cursor = 0;
-      let added = 0;
-
-      elements.forEach((el) => {
-        const text = normalizeDocsText(el.textContent || "");
-        if (!text) return;
-        if (added > 0 && joiner) {
-          fullText += joiner;
-          cursor += joiner.length;
-        }
-        const textNode = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE) || null;
-        entries.push({
-          el,
-          textNode,
-          start: cursor,
-          end: cursor + text.length,
-          text,
-        });
-        fullText += text;
-        cursor += text.length;
-        added += 1;
-      });
-
-      return added > 0 && fullText.trim().length >= 2;
-    };
-
-    for (const container of containers) {
-      entries.length = 0;
-      fullText = "";
-      plainMode = false;
-
-      const lineNodes = container.querySelectorAll(".kix-lineview-content");
-      if (lineNodes.length && appendFromElements(lineNodes, { joiner: "\n" })) {
-        return { fullText, entries, plainMode, mode: "lines" };
-      }
-
-      entries.length = 0;
-      fullText = "";
-      const wordNodes = container.querySelectorAll(".kix-wordhtmlgenerator-word-node");
-      if (wordNodes.length && appendFromElements(wordNodes)) {
-        return { fullText, entries, plainMode, mode: "words" };
-      }
-
-      entries.length = 0;
-      fullText = "";
-      const svgTextNodes = container.querySelectorAll(
-        ".kix-canvas-tile-content text, .kix-canvas-tile-content tspan, .kix-a11y-text"
-      );
-      if (svgTextNodes.length && appendFromElements(svgTextNodes, { joiner: " " })) {
-        return { fullText, entries, plainMode, mode: "svg" };
-      }
-
-      entries.length = 0;
-      fullText = "";
-      const pages = container.querySelectorAll(".kix-page-content-wrapper, .kix-page");
-      if (pages.length && appendFromElements(pages, { joiner: "\n" })) {
-        return { fullText, entries, plainMode, mode: "pages" };
-      }
-    }
-
-    entries.length = 0;
-    fullText = "";
-    const plainSources = [
-      hiddenText,
-      document.querySelector(".kix-appview-editor"),
-      document.querySelector(".kix-rotatingtilemanager-content"),
-      document.querySelector("#docs-editor-container"),
-    ].filter(Boolean);
-
-    for (const container of plainSources) {
-      const text = normalizeDocsText(container.innerText || "");
-      if (text.trim().length >= 2) {
-        fullText = text;
-        plainMode = true;
-        return { fullText, entries, plainMode, mode: "plain" };
-      }
-    }
-
-    return null;
+    return docsHooks.active;
   }
 
   function getReadableRoot() {
-    if (isGoogleDocs()) {
-      const editor = getGoogleDocsEditor();
-      if (editor && editor.innerText.replace(/\s+/g, " ").trim().length > 10) return editor;
+    if (docsHooks.getReadableRoot) {
+      const docsRoot = docsHooks.getReadableRoot();
+      if (docsRoot) return docsRoot;
     }
 
     const selectors = [
@@ -784,7 +216,7 @@
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent || SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-        const inDocsEditor = isGoogleDocs() && isInGoogleDocsEditor(parent);
+        const inDocsEditor = docsHooks.isInDocsEditor?.(parent);
         if (!inDocsEditor && !isVisible(parent)) return NodeFilter.FILTER_REJECT;
         const text = node.textContent.replace(/\s+/g, " ").trim();
         if (!text || text.length < 2) return NodeFilter.FILTER_REJECT;
@@ -823,7 +255,7 @@
   }
 
   function isSkippableTarget(el) {
-    return !el || el.closest(".brave-tts-toolbar, .brave-tts-play-here, .brave-tts-hover-play, .brave-tts-para-play, .brave-tts-back-on-track, .brave-tts-gesture-prompt");
+    return !el || el.closest(".brave-tts-toolbar, .brave-tts-play-here, .brave-tts-hover-play, .brave-tts-back-on-track, .brave-tts-gesture-prompt");
   }
 
   function supportsCssHighlights() {
@@ -856,28 +288,9 @@
   function resolveReadStartFromElement(el) {
     if (!el || !STATE.segments.length) return null;
 
-    if (isGoogleDocs()) {
-      const lineEl = el.closest?.(".kix-lineview-content, .kix-lineview") || el;
-      const a11yEntry = STATE.docsEntries?.find((item) =>
-        item.isA11y && (
-          item.el === el ||
-          item.el === lineEl ||
-          item.rects?.includes(el) ||
-          item.rects?.some((rect) => lineEl.contains?.(rect) || rect.contains?.(el))
-        )
-      );
-      if (a11yEntry) return resolveGoogleDocsStartFromOffset(a11yEntry.start);
-
-      for (let i = 0; i < STATE.segments.length; i++) {
-        const seg = STATE.segments[i];
-        if (seg.lineEl && (seg.lineEl === lineEl || lineEl.contains(seg.lineEl) || seg.lineEl.contains(lineEl))) {
-          return { index: i, textOverride: null };
-        }
-      }
-      const entry = STATE.docsEntries?.find((item) =>
-        item.el === lineEl || lineEl.contains(item.el) || item.el?.contains(lineEl)
-      );
-      if (entry) return resolveGoogleDocsStartFromOffset(entry.start);
+    if (docsHooks.resolveReadStartFromElement) {
+      const docsResult = docsHooks.resolveReadStartFromElement(el);
+      if (docsResult) return docsResult;
     }
 
     for (let i = 0; i < STATE.segments.length; i++) {
@@ -899,26 +312,17 @@
   }
 
   function findBlockFromTarget(target) {
-    if (isGoogleDocs()) {
-      return target?.closest?.(".kix-lineview-content, .kix-lineview") ||
-        target?.closest?.(DOCS_A11Y_RECT_SELECTOR);
+    if (docsHooks.findBlockFromTarget) {
+      const result = docsHooks.findBlockFromTarget(target);
+      if (result) return result;
     }
     return target?.closest?.(PARAGRAPH_SELECTOR) ||
       target?.closest?.("article, main, section, div[data-brave-tts-block]");
   }
 
   function getHoverReadingTarget(x, y) {
-    if (isGoogleDocs()) {
-      const target = getGoogleDocsHoverTarget(x, y);
-      if (!target || isSkippableTarget(target)) return null;
-      const entry = findA11yLineEntryAtPoint(x, y);
-      if (entry?.text?.length >= 2) return entry.el || entry.rects?.[0] || target;
-      if (target.matches?.(DOCS_A11Y_RECT_SELECTOR)) return target;
-      if (target.closest?.(".kix-appview-editor, .kix-page-paginated, .kix-rotatingtilemanager-content")) {
-        return target.closest(".kix-appview-editor, .kix-page-paginated, .kix-rotatingtilemanager-content");
-      }
-      if (target.textContent?.replace(/\s+/g, " ").trim().length >= 2) return target;
-      return null;
+    if (docsHooks.getHoverReadingTarget) {
+      return docsHooks.getHoverReadingTarget(x, y);
     }
 
     const el = document.elementFromPoint(x, y);
@@ -977,27 +381,8 @@
   async function startReadingFromTarget(target, point) {
     if (!target) return;
 
-    if (isGoogleDocs()) {
-      if (!buildGoogleDocsSegments()) {
-        showGoogleDocsHint(t("content.docsNotReady"));
-        return;
-      }
-      let startInfo = resolveReadStartFromElement(target);
-      const coords = point || STATE.hoverPointer || STATE.lastPointer;
-      if (!startInfo && coords) {
-        startInfo = resolveGoogleDocsStartFromPoint(coords.x, coords.y);
-      }
-      if (!startInfo) {
-        showGoogleDocsHint(t("content.docsLineUnknown"));
-        return;
-      }
-      if (STATE.running) {
-        jumpToStartInfo(startInfo);
-        return;
-      }
-      const stored = await loadStoredSettings();
-      requestReading(startInfo, stored, null);
-      return;
+    if (docsHooks.startReadingFromTarget) {
+      return docsHooks.startReadingFromTarget(target, point);
     }
 
     if (!buildSegments()) {
@@ -1041,6 +426,7 @@
     STATE.hoverTimer = setTimeout(() => {
       if (STATE.hoverTarget !== target || !target.isConnected) return;
       showHoverPlayButton(target);
+      maybePrefetchEdgeOnHover(target);
     }, HOVER_PLAY_DELAY_MS);
   }
 
@@ -1048,54 +434,6 @@
     STATE.hoverTarget = null;
     clearHoverPlayTimer();
     hideHoverPlayButton();
-  }
-
-  function readFromParagraph(blockEl) {
-    if (!blockEl) return;
-    if (!buildSegments()) {
-      alert(t("content.noText"));
-      return;
-    }
-
-    const startInfo = resolveReadStartFromElement(blockEl);
-    if (!startInfo) {
-      alert(t("content.noReadPositionInBlock"));
-      return;
-    }
-
-    requestReading(startInfo, null, blockEl);
-  }
-
-  function setActiveParagraphButton(blockEl) {
-    if (STATE.activeParagraphBtn) {
-      STATE.activeParagraphBtn.classList.remove("is-active");
-      STATE.activeParagraphBtn = null;
-    }
-    if (!blockEl) return;
-    const btn = blockEl.querySelector(":scope > .brave-tts-para-play");
-    if (btn) {
-      btn.classList.add("is-active");
-      STATE.activeParagraphBtn = btn;
-    }
-  }
-
-  function clearActiveParagraphButton() {
-    setActiveParagraphButton(null);
-  }
-
-  function removeParagraphPlayButtons() {
-    document.querySelectorAll(".brave-tts-para-play").forEach((btn) => btn.remove());
-    document.querySelectorAll(".brave-tts-para-wrap").forEach((el) => {
-      el.classList.remove("brave-tts-para-wrap");
-    });
-  }
-
-  function installParagraphPlayButtons() {
-    removeParagraphPlayButtons();
-  }
-
-  function scheduleParagraphPlayButtons() {
-    removeParagraphPlayButtons();
   }
 
   function getCaretFromPoint(x, y) {
@@ -1136,212 +474,6 @@
     return null;
   }
 
-  function getGlobalOffsetInEditor(node, offset) {
-    const caret = normalizeTextNode(node, offset);
-    if (!caret) return -1;
-
-    if (STATE.docsEntries?.length) {
-      for (const entry of STATE.docsEntries) {
-        if (entry.isA11y && entry.rects?.includes(caret.node)) {
-          return entry.start;
-        }
-        if (entry.textNode === caret.node) {
-          return Math.min(entry.end, entry.start + caret.offset);
-        }
-        if (entry.el?.contains(caret.node)) {
-          return entry.start;
-        }
-      }
-    }
-
-    const editor = getGoogleDocsEditor();
-    if (!editor) return -1;
-
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-    let cursor = 0;
-    while (walker.nextNode()) {
-      const textNode = walker.currentNode;
-      if (textNode === caret.node) {
-        return cursor + caret.offset;
-      }
-      cursor += textNode.textContent.length;
-    }
-    return -1;
-  }
-
-  function resolveGoogleDocsStartFromOffset(globalOffset) {
-    if (globalOffset < 0 || !STATE.segments.length) return null;
-
-    for (let i = 0; i < STATE.segments.length; i++) {
-      const seg = STATE.segments[i];
-      if (globalOffset >= seg.globalStart && globalOffset < seg.globalEnd) {
-        const slice = STATE.docsFullText.slice(globalOffset, seg.globalEnd);
-        const textOverride = trimFromWordBoundary(slice);
-        return { index: i, textOverride: textOverride || null };
-      }
-      if (globalOffset < seg.globalStart) {
-        return { index: i, textOverride: null };
-      }
-    }
-
-    return { index: STATE.segments.length - 1, textOverride: null };
-  }
-
-  function resolveGoogleDocsStartFromSelection() {
-    const sources = [window.getSelection()];
-
-    try {
-      const iframe = document.querySelector("iframe.docs-texteventtarget-iframe");
-      const iframeSel = iframe?.contentDocument?.getSelection?.();
-      if (iframeSel) sources.push(iframeSel);
-    } catch {
-      /* ignore */
-    }
-
-    for (const sel of sources) {
-      if (!sel?.rangeCount) continue;
-
-      const range = sel.getRangeAt(0);
-      const globalOffset = getGlobalOffsetInEditor(range.startContainer, range.startOffset);
-      if (globalOffset >= 0) {
-        return resolveGoogleDocsStartFromOffset(globalOffset);
-      }
-
-      const selected = normalizeDocsText(sel.toString()).trim();
-      if (selected.length >= 1 && STATE.docsFullText) {
-        let idx = STATE.docsFullText.indexOf(selected);
-        if (idx < 0) {
-          idx = STATE.docsFullText.toLowerCase().indexOf(selected.toLowerCase());
-        }
-        if (idx >= 0) return resolveGoogleDocsStartFromOffset(idx);
-      }
-    }
-
-    return null;
-  }
-
-  function resolveGoogleDocsStartFromPoint(x, y) {
-    const startFromSelection = resolveGoogleDocsStartFromSelection();
-    if (startFromSelection) return startFromSelection;
-
-    if (STATE.docsClosureMode) {
-      return resolveGoogleDocsStartFromPointClosure(x, y);
-    }
-
-    const lineEntry = findA11yLineEntryAtPoint(x, y);
-    if (lineEntry) return resolveGoogleDocsStartFromOffset(lineEntry.start);
-
-    const a11yRect = getDocsA11yRectAtPoint(x, y);
-    if (a11yRect) {
-      const entry = STATE.docsEntries?.find((item) => item.isA11y && item.rects?.includes(a11yRect));
-      if (entry) return resolveGoogleDocsStartFromOffset(entry.start);
-    }
-
-    const caret = getCaretFromPoint(x, y);
-    if (!caret) return null;
-    const globalOffset = getGlobalOffsetInEditor(caret.node, caret.offset);
-    return resolveGoogleDocsStartFromOffset(globalOffset);
-  }
-
-  function getGoogleDocsRange(globalStart, globalEnd) {
-    if (STATE.docsEntries?.length) {
-      try {
-        const startEntry = STATE.docsEntries.find(
-          (entry) => globalStart >= entry.start && globalStart <= entry.end
-        );
-        if (startEntry?.isA11y) {
-          return getA11yRangeForEntry(startEntry, globalStart, globalEnd);
-        }
-
-        const range = document.createRange();
-        let startSet = false;
-
-        for (const entry of STATE.docsEntries) {
-          if (entry.isA11y) continue;
-          if (!startSet && globalStart >= entry.start && globalStart <= entry.end) {
-            const node = entry.textNode || entry.el;
-            const offset = entry.textNode
-              ? Math.min(entry.textNode.textContent.length, globalStart - entry.start)
-              : 0;
-            range.setStart(node, offset);
-            startSet = true;
-          }
-          if (startSet && globalEnd >= entry.start && globalEnd <= entry.end) {
-            const node = entry.textNode || entry.el;
-            const offset = entry.textNode
-              ? Math.min(entry.textNode.textContent.length, globalEnd - entry.start)
-              : (entry.el?.childNodes?.length || 0);
-            range.setEnd(node, offset);
-            return range;
-          }
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-
-    const editor = getGoogleDocsEditor();
-    if (!editor) return null;
-
-    try {
-      const range = document.createRange();
-      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-      let cursor = 0;
-      let startNode = null;
-      let startOffset = 0;
-      let endNode = null;
-      let endOffset = 0;
-
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        const len = node.textContent.length;
-        const nextCursor = cursor + len;
-
-        if (!startNode && globalStart >= cursor && globalStart <= nextCursor) {
-          startNode = node;
-          startOffset = Math.max(0, globalStart - cursor);
-        }
-
-        if (startNode && globalEnd >= cursor && globalEnd <= nextCursor) {
-          endNode = node;
-          endOffset = Math.max(0, globalEnd - cursor);
-          break;
-        }
-
-        cursor = nextCursor;
-      }
-
-      if (!startNode || !endNode) return null;
-      range.setStart(startNode, startOffset);
-      range.setEnd(endNode, endOffset);
-      return range;
-    } catch {
-      return null;
-    }
-  }
-
-  function buildGoogleDocsSegments() {
-    const collected = collectGoogleDocsContent();
-    if (!collected) return false;
-
-    STATE.docsFullText = collected.fullText;
-    STATE.docsEntries = collected.entries;
-    STATE.docsPlainMode = collected.plainMode;
-    STATE.docsA11yMode = collected.mode === "a11y";
-    STATE.docsClosureMode = collected.mode === "closure";
-    if (collected.entries.length && collected.mode === "lines") {
-      STATE.segments = buildGoogleDocsLineSegments(collected.entries);
-    } else if (collected.entries.length) {
-      STATE.segments = buildGoogleDocsLineSegments(collected.entries);
-      if (!STATE.segments.length) {
-        STATE.segments = splitDocsIntoSegments(collected.fullText);
-      }
-    } else {
-      STATE.segments = splitDocsIntoSegments(collected.fullText);
-    }
-    return STATE.segments.length > 0;
-  }
-
   function trimFromWordBoundary(text) {
     const trimmed = text.replace(/^\s+/, "");
     if (!trimmed) return "";
@@ -1380,9 +512,8 @@
   }
 
   function resolveReadStartFromPoint(x, y) {
-    if (isGoogleDocs()) {
-      if (!STATE.segments.length) buildGoogleDocsSegments();
-      return resolveGoogleDocsStartFromPoint(x, y);
+    if (docsHooks.resolveReadStartFromPoint) {
+      return docsHooks.resolveReadStartFromPoint(x, y);
     }
     const caret = getCaretFromPoint(x, y);
     if (!caret) return null;
@@ -1390,9 +521,8 @@
   }
 
   function resolveReadStartFromSelection() {
-    if (isGoogleDocs()) {
-      if (!STATE.segments.length) buildGoogleDocsSegments();
-      return resolveGoogleDocsStartFromSelection();
+    if (docsHooks.resolveReadStartFromSelection) {
+      return docsHooks.resolveReadStartFromSelection();
     }
     const sel = window.getSelection();
     if (!sel?.rangeCount) return null;
@@ -1436,11 +566,6 @@
     if (window.speechSynthesis.paused) {
       window.speechSynthesis.resume();
     }
-  }
-
-  function hidePlayHereButton() {
-    STATE.playHereBtn?.remove();
-    STATE.playHereBtn = null;
   }
 
   function hideGesturePrompt() {
@@ -1490,34 +615,8 @@
     STATE.gesturePromptEl = overlay;
   }
 
-  function showPlayHereButton(x, y, startInfo) {
-    hidePlayHereButton();
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "brave-tts-play-here";
-    btn.innerHTML = `<span class="icon">▶</span> ${t("content.readFromHere")}`;
-    btn.style.left = `${Math.min(x, window.innerWidth - 160)}px`;
-    btn.style.top = `${Math.max(12, y - 48)}px`;
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      hidePlayHereButton();
-      beginReadingFromStartInfo(startInfo);
-    });
-    document.body.appendChild(btn);
-    STATE.playHereBtn = btn;
-  }
-
-  function showPlayHereAtSelection(startInfo) {
-    const sel = window.getSelection();
-    if (!sel?.rangeCount) return;
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top;
-    showPlayHereButton(x, y, startInfo);
-  }
-
   function buildSegments() {
-    if (isGoogleDocs()) return buildGoogleDocsSegments();
+    if (docsHooks.buildSegments) return docsHooks.buildSegments();
 
     const root = getReadableRoot();
     const textNodes = collectTextNodes(root);
@@ -1525,13 +624,8 @@
     return STATE.segments.length > 0;
   }
 
-  function maybeExtendGoogleDocsSegments(currentIndex) {
-    if (!isGoogleDocs() || currentIndex < STATE.segments.length - 4) return;
-    const prevLength = STATE.segments.length;
-    buildSegments();
-    if (STATE.segments.length > prevLength) {
-      setStatus(t("content.statusReading"));
-    }
+  function maybeExtendSegments(currentIndex) {
+    docsHooks.maybeExtendSegments?.(currentIndex);
   }
 
   function cancelCurrentSpeech() {
@@ -1541,16 +635,90 @@
       STATE.currentAudio.pause();
       STATE.currentAudio = null;
     }
+    revokeNextAudioUrl();
   }
 
   function abortReadingSession() {
     STATE.readGeneration += 1;
     STATE.edgeAudioCache.clear();
+    revokeNextAudioUrl();
     cancelCurrentSpeech();
     if (STATE.abortController) {
       STATE.abortController.abort();
     }
     STATE.abortController = new AbortController();
+  }
+
+  function normalizeSettingValue(key, value) {
+    if (key === "rate") return String(clampRate(value));
+    return value ?? "";
+  }
+
+  function playbackProfileSnapshot(settings = STATE.settings) {
+    return PLAYBACK_PROFILE_KEYS
+      .map((key) => normalizeSettingValue(key, settings[key]))
+      .join("\0");
+  }
+
+  function invalidateEdgePlaybackCache() {
+    STATE.edgeAudioCache.clear();
+    revokeNextAudioUrl();
+  }
+
+  function isRetriableSpeechError(err) {
+    return err?.message === "aborted" || err?.name === "AbortError";
+  }
+
+  function switchActivePlayback() {
+    invalidateEdgePlaybackCache();
+    if (STATE.abortController) {
+      STATE.abortController.abort();
+    }
+    STATE.abortController = new AbortController();
+
+    if (STATE.paused) return;
+
+    cancelCurrentSpeech();
+
+    if (STATE.settings.provider === "edge") {
+      const text = STATE.segments[STATE.currentIndex]?.text;
+      if (text) {
+        ensureEdgeSynthFrame().catch(() => {});
+        prefetchEdgeAudio(text, STATE.settings, { priority: true });
+        prefetchEdgeAhead(STATE.currentIndex, STATE.settings);
+      }
+    }
+  }
+
+  function applySyncedSettings(changes) {
+    const updates = {};
+    for (const key of SETTINGS_FIELDS) {
+      if (!changes[key]) continue;
+      updates[key] = key === "rate" ? clampRate(changes[key].newValue) : changes[key].newValue;
+    }
+    if (!Object.keys(updates).length) return;
+
+    const prevProfile = playbackProfileSnapshot(STATE.settings);
+    const prevRate = clampRate(STATE.settings.rate || 1);
+
+    STATE.settings = { ...STATE.settings, ...updates };
+
+    if (updates.uiLang !== undefined) syncContentUi();
+    if (updates.rate !== undefined) syncToolbarRate(STATE.settings.rate);
+
+    if (!STATE.running) return;
+
+    const profileChanged = prevProfile !== playbackProfileSnapshot(STATE.settings);
+    const rateChanged = prevRate !== clampRate(STATE.settings.rate || 1);
+
+    if (profileChanged) {
+      switchActivePlayback();
+      return;
+    }
+
+    if (rateChanged && !STATE.paused) {
+      setRate(STATE.settings.rate);
+    }
   }
 
   function isActivePlayRequest(requestId) {
@@ -1582,20 +750,26 @@
       STATE.running = true;
       STATE.paused = false;
       STATE.autoFollow = true;
-      hidePlayHereButton();
       hideBackOnTrack();
       attachScrollTracking();
       ensureToolbar();
       updatePauseButton();
-      setActiveParagraphButton(blockEl || null);
-      setStatus(t("content.statusReading"));
       if (resolvedSettings?.provider === "edge") {
-        ensureEdgeSynthFrame().catch(() => {});
-        const firstText =
-          resolvedStart.textOverride || STATE.segments[resolvedStart.index]?.text;
-        if (firstText) prefetchEdgeAudio(firstText, resolvedSettings);
-        prefetchEdgeAhead(resolvedStart.index, resolvedSettings);
+        setStatus(t("content.statusPreparing"));
+        warmEdgeBuffer(
+          resolvedStart.index,
+          resolvedSettings,
+          requestId,
+          resolvedStart.textOverride
+        ).catch((err) => {
+          console.warn("[Brave TTS] Edge buffer warm failed:", err?.message || err);
+        });
+        setStatus(t("content.statusReading"));
+        readFromIndex(resolvedStart.index, resolvedStart.textOverride, requestId);
+        return;
       }
+
+      setStatus(t("content.statusReading"));
       readFromIndex(resolvedStart.index, resolvedStart.textOverride, requestId);
     };
 
@@ -1615,74 +789,8 @@
     });
   }
 
-  function beginReadingFromStartInfo(startInfo, settings) {
-    requestReading(startInfo, settings, null);
-  }
-
   function jumpToStartInfo(startInfo) {
     requestReading(startInfo, STATE.settings, null);
-  }
-
-  async function handleReadFromPoint(x, y, { jumpIfRunning = false, showButton = false, target = null } = {}) {
-    if (!buildSegments()) {
-      alert(t("content.noText"));
-      return;
-    }
-
-    let startInfo = resolveReadStartFromPoint(x, y);
-    if (!startInfo && target) {
-      const block = findBlockFromTarget(target);
-      if (block) startInfo = resolveReadStartFromElement(block);
-    }
-    if (!startInfo) {
-      alert(t("content.noReadPositionAtPoint"));
-      return;
-    }
-
-    if (showButton) {
-      showPlayHereButton(x, y, startInfo);
-      return;
-    }
-
-    if (jumpIfRunning && STATE.running) {
-      jumpToStartInfo(startInfo);
-      return;
-    }
-
-    beginReadingFromStartInfo(startInfo);
-  }
-
-  async function handleReadFromSelection({ showButton = false } = {}) {
-    if (!buildSegments()) {
-      alert(t("content.noText"));
-      return;
-    }
-
-    const startInfo = resolveReadStartFromSelection();
-    if (!startInfo) {
-      alert(t("content.noReadPositionInSelection"));
-      return;
-    }
-
-    if (showButton) {
-      showPlayHereAtSelection(startInfo);
-      return;
-    }
-
-    beginReadingFromStartInfo(startInfo);
-  }
-
-  function showGoogleDocsHint(message) {
-    document.querySelector(".brave-tts-docs-hint")?.remove();
-    const hint = document.createElement("div");
-    hint.className = "brave-tts-docs-hint";
-    hint.textContent = message || t("content.docsHintDefault");
-    document.body.appendChild(hint);
-    setTimeout(() => hint.classList.add("is-visible"), 30);
-    setTimeout(() => {
-      hint.classList.remove("is-visible");
-      setTimeout(() => hint.remove(), 300);
-    }, 5000);
   }
 
   function applyNativeSelectionHighlight(range) {
@@ -1709,14 +817,13 @@
 
   function clearHighlights() {
     document.querySelectorAll("[data-brave-tts-imposter='1']").forEach((node) => node.remove());
-    if (isGoogleDocs()) clearNativeSelection();
+    if (!isGoogleDocs()) clearNativeSelection();
     safeDeleteHighlight("brave-tts-sentence");
     safeDeleteHighlight("brave-tts-word");
     document.querySelectorAll(".brave-tts-highlight, .brave-tts-word").forEach((el) => {
       el.classList.remove("brave-tts-highlight", "brave-tts-word");
     });
     STATE.highlightEl = null;
-    STATE.wordEls = [];
   }
 
   function scrollRangeIntoView(range, { force = false } = {}) {
@@ -1731,14 +838,8 @@
     if (!force && !outOfView) return;
 
     STATE.lastProgrammaticScrollAt = Date.now();
-    if (isGoogleDocs()) {
-      const el = range.startContainer.nodeType === Node.TEXT_NODE
-        ? range.startContainer.parentElement
-        : range.startContainer;
-      el?.scrollIntoView({
-        block: "center",
-        behavior: force ? "smooth" : "auto",
-      });
+    if (docsHooks.scrollIntoView) {
+      docsHooks.scrollIntoView(range, { force });
       return;
     }
 
@@ -1824,19 +925,8 @@
   }
 
   function getSegmentTextRange(segment, spokenText) {
-    if (segment?.isGoogleDocs) {
-      let start = segment.globalStart;
-      let end = segment.globalEnd;
-
-      if (spokenText && spokenText !== segment.text) {
-        const localIdx = segment.text.indexOf(spokenText.trim());
-        if (localIdx >= 0) {
-          start = segment.globalStart + localIdx;
-          end = start + spokenText.length;
-        }
-      }
-
-      return getGoogleDocsRange(start, end);
+    if (segment?.isGoogleDocs && docsHooks.getSegmentRange) {
+      return docsHooks.getSegmentRange(segment, spokenText);
     }
 
     if (!segment?.node) return null;
@@ -1884,11 +974,7 @@
   }
 
   function applyWordHighlight(range) {
-    if (!range || range.collapsed) return;
-    if (isGoogleDocs()) {
-      applyNativeSelectionHighlight(range);
-      return;
-    }
+    if (!range || range.collapsed || isGoogleDocs()) return;
     safeSetHighlight("brave-tts-word", range);
   }
 
@@ -1898,17 +984,16 @@
     });
     segment?.lineEl?.classList?.add("brave-tts-line-active");
     clearHighlights();
-    if (isGoogleDocs() && STATE.docsClosureMode) {
-      const entry = STATE.docsEntries?.find(
-        (item) => segment.globalStart >= item.start && segment.globalStart <= item.end
-      );
-      scrollToDocsClosureEntry(entry);
+    if (docsHooks.highlightSentence) {
+      docsHooks.highlightSentence(segment, spokenText);
       return;
     }
     applySentenceHighlight(getSegmentTextRange(segment, spokenText));
   }
 
   function highlightSpokenProgress(segment, spokenText, charEnd) {
+    if (isGoogleDocs()) return;
+
     const baseRange = getSegmentTextRange(segment, spokenText);
     if (!baseRange) return;
 
@@ -1981,6 +1066,13 @@
 
     if (!changed || !STATE.running || STATE.paused) return;
 
+    if (STATE.settings.provider === "edge") {
+      if (STATE.currentAudio) {
+        STATE.currentAudio.playbackRate = next;
+      }
+      return;
+    }
+
     STATE.speakToken += 1;
     window.speechSynthesis?.cancel();
     if (STATE.currentAudio) {
@@ -2019,15 +1111,12 @@
     resetFollowMode();
     abortReadingSession();
     clearHighlights();
-    hidePlayHereButton();
     hideHoverPlayButton();
     hideGesturePrompt();
-    clearActiveParagraphButton();
     STATE.backOnTrackEl?.remove();
     STATE.backOnTrackEl = null;
     STATE.toolbar?.remove();
     STATE.toolbar = null;
-    scheduleParagraphPlayButtons();
   }
 
   async function speakWebSpeech(text, rate, voiceName, lang, segment) {
@@ -2192,7 +1281,7 @@
     });
   }
 
-  async function synthesizeViaEdgeFrame({ text, voice, lang, rate }) {
+  async function synthesizeViaEdgeFrame({ text, voice, lang, rate, priority = false, streaming = false }) {
     const id = crypto.randomUUID();
     const frame = await ensureEdgeSynthFrame();
 
@@ -2200,9 +1289,11 @@
       const timer = setTimeout(() => {
         window.removeEventListener("message", onMessage);
         reject(new Error("Edge TTS: timeout"));
-      }, 60000);
+      }, 90000);
 
       const onMessage = (event) => {
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.type === "EDGE_SYNTHESIZE_CHUNK" && event.data.id === id) return;
         if (event.data?.type !== "EDGE_SYNTHESIZE_RESULT" || event.data.id !== id) return;
         window.removeEventListener("message", onMessage);
         clearTimeout(timer);
@@ -2226,15 +1317,15 @@
 
       window.addEventListener("message", onMessage);
       frame.contentWindow.postMessage(
-        { type: "EDGE_SYNTHESIZE", id, text, voice, lang, rate },
+        { type: "EDGE_SYNTHESIZE", id, text, voice, lang, rate, priority, streaming },
         "*"
       );
     });
   }
 
   function edgeAudioCacheKey(text, settings) {
-    const { edgeVoice, rate, lang } = settings;
-    return `${edgeVoice || "vi-VN-HoaiMyNeural"}|${lang || "vi-VN"}|${clampRate(rate)}|${text}`;
+    const { edgeVoice, lang } = settings;
+    return `${edgeVoice || "vi-VN-HoaiMyNeural"}|${lang || "vi-VN"}|${text}`;
   }
 
   function trimEdgeAudioCache() {
@@ -2254,27 +1345,85 @@
     }
   }
 
-  function prefetchEdgeAudio(text, settings) {
+  function prefetchEdgeAudio(text, settings, { priority = false } = {}) {
     if (!text || settings?.provider !== "edge") return;
     const key = edgeAudioCacheKey(text, settings);
-    if (STATE.edgeAudioCache.has(key)) return;
-    STATE.edgeAudioCache.set(
-      key,
-      fetchEdgeAudioBytes(text, settings).catch((err) => {
-        STATE.edgeAudioCache.delete(key);
-        throw err;
-      })
-    );
-    trimEdgeAudioCache();
+    const cached = STATE.edgeAudioCache.get(key);
+    if (cached instanceof Uint8Array || cached instanceof Promise) return;
+    getEdgeAudioBytes(text, settings, { priority }).catch((err) => {
+      console.warn("[Brave TTS] Edge prefetch failed:", err?.message || err);
+    });
   }
 
-  async function fetchEdgeAudioBytes(text, settings) {
-    const { edgeVoice, rate, lang } = settings;
+  async function getEdgeAudioBytes(text, settings, { priority = true } = {}) {
+    const key = edgeAudioCacheKey(text, settings);
+    const cached = STATE.edgeAudioCache.get(key);
+
+    if (cached instanceof Uint8Array && cached.length) return cached;
+
+    if (cached instanceof Promise) {
+      const bytes = await cached;
+      if (bytes?.length) return bytes;
+    }
+
+    const promise = fetchEdgeAudioBytes(text, settings, { priority })
+      .then((bytes) => {
+        if (bytes?.length) STATE.edgeAudioCache.set(key, bytes);
+        else STATE.edgeAudioCache.delete(key);
+        return bytes;
+      })
+      .catch((err) => {
+        STATE.edgeAudioCache.delete(key);
+        throw err;
+      });
+
+    STATE.edgeAudioCache.set(key, promise);
+    trimEdgeAudioCache();
+    return promise;
+  }
+
+  async function warmEdgeBuffer(fromIndex, settings, requestId, firstTextOverride) {
+    if (settings?.provider !== "edge") return;
+    await ensureEdgeSynthFrame().catch(() => {});
+    if (!isActivePlayRequest(requestId)) return;
+
+    const firstText = firstTextOverride || STATE.segments[fromIndex]?.text;
+    prefetchEdgeAhead(fromIndex, settings);
+    if (!firstText) return;
+
+    prefetchEdgeAudio(firstText, settings, { priority: true });
+  }
+
+  function maybePrefetchEdgeOnHover(target) {
+    const applyPrefetch = (settings) => {
+      if (settings?.provider !== "edge" || !settings.edgeVoice) return;
+      if (!STATE.segments.length && !buildSegments()) return;
+
+      const startInfo = resolveReadStartFromElement(target);
+      if (!startInfo) return;
+
+      ensureEdgeSynthFrame().catch(() => {});
+      const firstText = startInfo.textOverride || STATE.segments[startInfo.index]?.text;
+      if (firstText) prefetchEdgeAudio(firstText, settings, { priority: true });
+      prefetchEdgeAhead(startInfo.index, settings, EDGE_HOVER_PREFETCH_AHEAD);
+    };
+
+    if (STATE.settings?.provider === "edge") {
+      applyPrefetch(STATE.settings);
+      return;
+    }
+
+    loadStoredSettings().then(applyPrefetch);
+  }
+
+  async function fetchEdgeAudioBytes(text, settings, { priority = true } = {}) {
+    const { edgeVoice, lang } = settings;
     const resp = await synthesizeViaEdgeFrame({
       text,
       voice: edgeVoice || "vi-VN-HoaiMyNeural",
       lang: lang || "vi-VN",
-      rate: clampRate(rate),
+      rate: 1,
+      priority,
     });
     return resp.audioBytes;
   }
@@ -2282,59 +1431,156 @@
   async function speakEdge(text, settings, segment) {
     const token = STATE.speakToken;
     const key = edgeAudioCacheKey(text, settings);
-    let bytesPromise = STATE.edgeAudioCache.get(key);
-    if (bytesPromise) STATE.edgeAudioCache.delete(key);
-    else bytesPromise = fetchEdgeAudioBytes(text, settings);
+    let cached = STATE.edgeAudioCache.get(key);
 
-    let bytes;
-    try {
-      bytes = await bytesPromise;
-    } catch {
-      bytes = await fetchEdgeAudioBytes(text, settings);
+    if (cached instanceof Promise) {
+      try {
+        cached = await cached;
+      } catch {
+        cached = null;
+      }
+    }
+
+    const needsFetch = !(cached instanceof Uint8Array && cached.length);
+    if (needsFetch && STATE.running) {
+      setStatus(t("content.statusPreparing"));
+    }
+
+    prefetchEdgeAhead(STATE.currentIndex, settings);
+
+    const rate = clampRate(settings.rate);
+    const preloadedUrl = takeNextAudioUrl();
+
+    if (preloadedUrl) {
+      if (token !== STATE.speakToken) {
+        URL.revokeObjectURL(preloadedUrl);
+        throw new Error("aborted");
+      }
+      if (STATE.running && !STATE.paused) {
+        setStatus(t("content.statusReading"));
+      }
+      try {
+        await playAudio(preloadedUrl, rate, token, segment, text, settings);
+      } finally {
+        URL.revokeObjectURL(preloadedUrl);
+      }
+      prepareNextEdgeAudioUrl(settings, token);
+      return;
+    }
+
+    let bytes = cached instanceof Uint8Array && cached.length ? cached : null;
+    if (!bytes) {
+      try {
+        bytes = await getEdgeAudioBytes(text, settings, { priority: true });
+        if (!bytes?.length) throw new Error("Edge TTS: no audio");
+      } catch {
+        bytes = await fetchEdgeAudioBytes(text, settings, { priority: true });
+      }
     }
 
     if (token !== STATE.speakToken) throw new Error("aborted");
+    if (STATE.running && !STATE.paused) {
+      setStatus(t("content.statusReading"));
+    }
 
     const blob = new Blob([bytes], { type: "audio/mp3" });
     const url = URL.createObjectURL(blob);
-    prefetchEdgeAhead(STATE.currentIndex, settings);
-    await playAudio(url, clampRate(settings.rate), token, segment, text);
-    URL.revokeObjectURL(url);
+    try {
+      await playAudio(url, rate, token, segment, text, settings);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    prepareNextEdgeAudioUrl(settings, token);
   }
 
-  function playAudio(url, rate, token, segment, spokenText) {
-    return new Promise((resolve, reject) => {
-      const audio = new Audio(url);
-      audio.playbackRate = clampRate(rate);
-      STATE.currentAudio = audio;
+  function ensurePlaybackAudio() {
+    if (!STATE.playbackAudio) {
+      STATE.playbackAudio = new Audio();
+    }
+    return STATE.playbackAudio;
+  }
 
+  function playAudio(url, rate, token, segment, spokenText, settings = STATE.settings) {
+    return new Promise((resolve, reject) => {
+      const audio = ensurePlaybackAudio();
+      const abortSignal = STATE.abortController?.signal;
+
+      if (abortSignal?.aborted) {
+        reject(new Error("aborted"));
+        return;
+      }
+
+      let settled = false;
+      const cleanup = () => {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.onplaying = null;
+        abortSignal?.removeEventListener("abort", onAbort);
+      };
+
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn(value);
+      };
+
+      const onEnded = () => {
+        STATE.currentAudio = null;
+        if (token !== STATE.speakToken) finish(reject, new Error("aborted"));
+        else finish(resolve);
+      };
+
+      const onError = () => {
+        STATE.currentAudio = null;
+        finish(reject, new Error("Audio playback failed"));
+      };
+
+      const onAbort = () => {
+        audio.pause();
+        STATE.currentAudio = null;
+        finish(reject, new Error("aborted"));
+      };
+
+      const resolvePlayRate = () => (
+        settings?.provider === "edge"
+          ? clampRate(STATE.settings.rate)
+          : clampRate(rate)
+      );
+
+      audio.onended = onEnded;
+      audio.onerror = onError;
       audio.ontimeupdate = () => {
         if (token !== STATE.speakToken || !segment || !spokenText || !audio.duration) return;
         const charEnd = Math.ceil((audio.currentTime / audio.duration) * spokenText.length);
         highlightSpokenProgress(segment, spokenText, charEnd);
       };
-
       audio.onplaying = () => {
-        if (STATE.settings?.provider === "edge") {
-          prefetchEdgeAhead(STATE.currentIndex, STATE.settings);
+        audio.playbackRate = resolvePlayRate();
+        if (settings?.provider === "edge") {
+          prefetchEdgeAhead(STATE.currentIndex, settings);
+          prepareNextEdgeAudioUrl(settings, token);
         }
       };
 
-      audio.onended = () => {
-        STATE.currentAudio = null;
-        if (token !== STATE.speakToken) reject(new Error("aborted"));
-        else resolve();
+      abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+      STATE.currentAudio = audio;
+
+      const start = () => {
+        audio.playbackRate = resolvePlayRate();
+        audio.play().catch((err) => finish(reject, err));
       };
-      audio.onerror = () => {
-        STATE.currentAudio = null;
-        reject(new Error("Audio playback failed"));
-      };
-      STATE.abortController?.signal.addEventListener("abort", () => {
-        audio.pause();
-        STATE.currentAudio = null;
-        reject(new Error("aborted"));
-      });
-      audio.play().catch(reject);
+
+      if (audio.src !== url) {
+        audio.src = url;
+      }
+
+      if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        start();
+      } else {
+        audio.addEventListener("canplay", start, { once: true });
+      }
     });
   }
 
@@ -2378,7 +1624,7 @@
       const segment = STATE.segments[i];
       const spokenText = i === startIndex && segmentOverride ? segmentOverride : segment.text;
 
-      maybeExtendGoogleDocsSegments(i);
+      maybeExtendSegments(i);
       highlightSentence(segment, spokenText);
       clearWordHighlight();
 
@@ -2394,7 +1640,7 @@
             await speakSegment(spokenText, segment);
             break;
           } catch (err) {
-            if (err.message !== "aborted" || !isActivePlayRequest(requestId) || STATE.paused) throw err;
+            if (!isRetriableSpeechError(err) || !isActivePlayRequest(requestId) || STATE.paused) throw err;
           }
         }
       } catch (err) {
@@ -2406,9 +1652,7 @@
           clearHighlights();
           STATE.toolbar?.remove();
           STATE.toolbar = null;
-          clearActiveParagraphButton();
           resetFollowMode();
-          scheduleParagraphPlayButtons();
           showGesturePrompt(STATE.settings, {
             index: i,
             textOverride: segmentOverride,
@@ -2453,65 +1697,11 @@
   document.addEventListener("pointermove", onHoverPointerMove, { passive: true });
   document.addEventListener("mouseleave", onHoverPointerLeave, { passive: true });
 
-  let docsScrollRebuildTimer = null;
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (!isGoogleDocs() || !STATE.running) return;
-      clearTimeout(docsScrollRebuildTimer);
-      docsScrollRebuildTimer = setTimeout(() => {
-        maybeExtendGoogleDocsSegments(STATE.currentIndex ?? 0);
-      }, 350);
-    },
-    { passive: true, capture: true }
-  );
-
-  document.addEventListener("mousedown", (e) => {
-    if (e.target.closest(".brave-tts-play-here, .brave-tts-hover-play")) return;
-    hidePlayHereButton();
-  });
-
-  document.addEventListener("dblclick", (e) => {
-    if (!isGoogleDocs()) return;
-    if (isSkippableTarget(e.target)) return;
-    if (!isInGoogleDocsEditor(e.target)) return;
-
-    const { clientX, clientY } = e;
-    setTimeout(async () => {
-      if (!buildGoogleDocsSegments()) {
-        await new Promise((r) => setTimeout(r, 250));
-        if (!buildGoogleDocsSegments()) {
-          showGoogleDocsHint(t("content.docsScrollRetry"));
-          return;
-        }
-      }
-
-      let startInfo = resolveGoogleDocsStartFromSelection() ||
-        resolveGoogleDocsStartFromPoint(clientX, clientY);
-      if (!startInfo) {
-        showGoogleDocsHint(t("content.docsDoubleClickText"));
-        return;
-      }
-
-      if (STATE.running) {
-        jumpToStartInfo(startInfo);
-        return;
-      }
-
-      const stored = await loadStoredSettings();
-      requestReading(startInfo, stored, null);
-    }, 150);
-  });
-
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "START_READING") {
       startReading(msg.settings);
       sendResponse({ ok: true });
       return true;
-    }
-    if (msg.type === "REFRESH_PARAGRAPH_BUTTONS") {
-      scheduleParagraphPlayButtons();
-      sendResponse({ ok: true });
     }
     if (msg.type === "READ_FROM_HERE") {
       (async () => {
@@ -2579,12 +1769,36 @@
     });
   }
 
-  removeParagraphPlayButtons();
-  if (isGoogleDocs()) {
-    ensureDocsA11yStyles();
-    tryEnableDocsScreenReader();
-    scheduleDocsA11yPoll();
-    showGoogleDocsHint();
-    setTimeout(showGoogleDocsHint, 4000);
-  }
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync") return;
+    applySyncedSettings(changes);
+  });
+
+  window.__braveTtsApi = {
+    STATE,
+    t,
+    clampRate,
+    SKIP_TAGS,
+    isVisible,
+    PARAGRAPH_SELECTOR,
+    trimFromWordBoundary,
+    normalizeTextNode,
+    getCaretFromPoint,
+    resolveReadStart,
+    alert: (msg) => window.alert(msg),
+    requestReading,
+    jumpToStartInfo,
+    loadStoredSettings,
+    resolveReadStartFromPoint,
+    resolveReadStartFromSelection,
+    buildSegments,
+    isSkippableTarget,
+    setStatus,
+    scrollRangeIntoView,
+  };
+
+  window.__braveTtsRegisterDocs = function (impl) {
+    Object.assign(docsHooks, impl, { active: true });
+    impl.init?.();
+  };
 })();
