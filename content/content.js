@@ -313,7 +313,7 @@
       if (result) return result;
     }
     return target?.closest?.(PARAGRAPH_SELECTOR) ||
-      target?.closest?.("article, main, section, div[data-brave-tts-block]");
+      target?.closest?.("article, main, section, [data-brave-tts-block]");
   }
 
   function getHoverReadingTarget(x, y) {

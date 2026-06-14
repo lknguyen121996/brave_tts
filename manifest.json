@@ -1,14 +1,31 @@
 {
   "manifest_version": 3,
   "name": "Brave Read Aloud",
-  "version": "1.0.0",
-  "description": "Đọc văn bản trang web với highlight, tự cuộn — TTS miễn phí (Web Speech / Edge / Azure / Google)",
-  "permissions": ["activeTab", "storage", "scripting", "contextMenus", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
-  "host_permissions": ["<all_urls>", "https://*.tts.speech.microsoft.com/*", "https://texttospeech.googleapis.com/*", "https://speech.platform.bing.com/*", "wss://speech.platform.bing.com/*"],
+  "version": "1.1.0",
+  "description": "Read web pages & PDFs aloud with highlight & auto-scroll",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "contextMenus",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://*.tts.speech.microsoft.com/*",
+    "https://texttospeech.googleapis.com/*",
+    "https://speech.platform.bing.com/*",
+    "wss://speech.platform.bing.com/*"
+  ],
   "web_accessible_resources": [
     {
-      "resources": ["content/docs-page.js"],
-      "matches": ["https://docs.google.com/*"]
+      "resources": [
+        "content/docs-page.js"
+      ],
+      "matches": [
+        "https://docs.google.com/*"
+      ]
     },
     {
       "resources": [
@@ -17,7 +34,20 @@
         "background/edge-tts-session-rules.js",
         "shared/edge-tts-client.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
+    },
+    {
+      "resources": [
+        "pdf-reader/pdf-reader.html",
+        "pdf-reader/pdf.min.js",
+        "pdf-reader/pdf.worker.min.js",
+        "pdf-reader/pdf_viewer.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "action": {
@@ -33,21 +63,42 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://docs.google.com/document/*"],
-      "js": ["content/docs-bootstrap.js"],
+      "matches": [
+        "https://docs.google.com/document/*"
+      ],
+      "js": [
+        "content/docs-bootstrap.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://docs.google.com/document/*"],
-      "js": ["shared/i18n.js", "content/content.js", "content/docs-content.js"],
-      "css": ["content/content.css"],
+      "matches": [
+        "https://docs.google.com/document/*"
+      ],
+      "js": [
+        "shared/i18n.js",
+        "content/content.js",
+        "content/docs-content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["<all_urls>"],
-      "exclude_matches": ["https://docs.google.com/document/*"],
-      "js": ["shared/i18n.js", "content/content.js"],
-      "css": ["content/content.css"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "exclude_matches": [
+        "https://docs.google.com/document/*"
+      ],
+      "js": [
+        "shared/i18n.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
       "run_at": "document_idle"
     }
   ],

@@ -589,6 +589,18 @@ $("btnPlay").addEventListener("click", () => {
   });
 });
 
+
+$("btnOpenPdf").addEventListener("click", async () => {
+  const { tabId, tabUrl } = await refreshActiveTab();
+  if (!tabId || !tabUrl) { $("status").textContent = t("status.noActiveTab"); return; }
+  const isPdf = /\.pdf(\?|$)/i.test(tabUrl) || tabUrl.startsWith("file://");
+  if (!isPdf) { $("status").textContent = "Open a PDF file first."; return; }
+  const readerUrl = chrome.runtime.getURL("pdf-reader/pdf-reader.html");
+  const raw = decodeURIComponent(tabUrl);
+  chrome.tabs.create({ url: `${readerUrl}?url=${encodeURIComponent(raw)}`, index: tabId + 1 });
+  window.close();
+});
+
 $("btnStop").addEventListener("click", () => {
   if (!cachedTabId) return;
   chrome.tabs.sendMessage(cachedTabId, { type: "STOP_READING" }, () => {
