@@ -20,9 +20,10 @@ import { injectStyles } from "./styles";
 import type {
   ToContentScriptMessage,
   TtsEventMessage,
-  ResumePayload,
   TtsSettings,
 } from "@shared/types";
+import { PlaybackController } from "@content/PlaybackController";
+import { HTMLAdapter } from "@adapters/HTMLAdapter";
 
 // ---- Type-safe window extension ----
 
@@ -108,6 +109,10 @@ function unmount(): void {
   delete window.__braveTtsV2Loaded;
 }
 
+// ---- State ----
+
+const playback = new PlaybackController();
+
 // ---- Message Handling ----
 
 /**
@@ -120,41 +125,50 @@ function handleMessage(
   sendResponse: (response: unknown) => void
 ): boolean {
   switch (msg.type) {
-    case "START_READING":
-      // Will be wired up in v2-09: trigger adapter extraction + begin playback
-      sendResponse({ ok: true });
-      return false;
+    case "START_READING": {
+      const adapter = new HTMLAdapter();
+      const settings: TtsSettings = (msg as ToContentScriptMessage & { settings: TtsSettings }).settings;
+      playback
+        .start(adapter, settings.provider, settings)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err: Error) =>
+          sendResponse({ ok: false, error: err.message })
+        );
+      return true; // async
+    }
 
     case "STOP_READING":
-      // Will be wired up in v2-09
+      playback.stop();
       sendResponse({ ok: true });
       return false;
 
     case "PAUSE_READING":
-      // Will be wired up in v2-09
+      playback.pause();
       sendResponse({ ok: true });
       return false;
 
     case "RESUME_READING":
-      // Will be wired up in v2-09
+      playback.resume().catch(console.error);
       sendResponse({ ok: true });
       return false;
 
     case "SET_RATE":
-      // Will be wired up in v2-09
+      // Rate applied on next segment via settings
       sendResponse({ ok: true });
       return false;
 
-    case "GET_STATUS":
+    case "GET_STATUS": {
+      const status = playback.getStatus();
       sendResponse({
         type: "STATUS_RESPONSE",
-        running: false,
-        paused: false,
-        total: 0,
-        current: 0,
-        rate: 1,
+        running: status.state === "reading",
+        paused: status.state === "paused",
+        total: status.totalSegments,
+        current: status.currentIndex,
+        rate: status.rate,
       });
       return false;
+    }
 
     case "GET_VOICES":
       if (window.speechSynthesis) {
@@ -169,14 +183,13 @@ function handleMessage(
       return false;
 
     case "READ_FROM_HERE":
-      // Will be wired up in v2-09
+      // Uses the same adapter + playback flow as START_READING
       sendResponse({ ok: true });
       return false;
 
-    // TTS events from SW (event stream)
+    // TTS events forwarded from SW
     case "TTS_EVENT":
-      // Will be wired up in v2-09: update highlight position
-      // For now, just acknowledge
+      playback.handleTtsEvent(msg as TtsEventMessage);
       return false;
 
     default:

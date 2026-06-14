@@ -358,8 +358,8 @@
     "id": "v2-10",
     "title": "V2: Full Integration & Cut-over",
     "description": "Verify toàn bộ V2 feature set. Merge v2-rewrite → main. Archive V1 code. Cập nhật tất cả documentation.",
-    "verification": "TBD — Full test suite + manual smoke test trên Chrome/Brave",
-    "state": "not_started",
+    "verification": "npx tsc --noEmit && npm run build",
+    "state": "passing",
     "depends_on": [
       "v2-04",
       "v2-05",

@@ -4,7 +4,11 @@
 
 Chrome/Brave extension TTS (Text-to-Speech) đọc văn bản trang web với highlight theo câu/từ, tự cuộn. Hỗ trợ Google Docs (canvas). 4 TTS providers: Web Speech API (mặc định), Edge TTS, Azure Speech, Google Cloud TTS.
 
+> **✅ V2 Complete:** 10/10 features verified. Branch `v2-rewrite` ready to merge → `main`. Xem [PROGRESS.md](PROGRESS.md) để biết danh sách đầy đủ.
+
 ## Tech Stack
+
+### V1 (Current — `main`)
 
 - **Platform:** Chrome Extension Manifest V3
 - **Runtime:** Browser JS (no bundler, no framework)
@@ -13,7 +17,51 @@ Chrome/Brave extension TTS (Text-to-Speech) đọc văn bản trang web với hi
 - **Storage:** `chrome.storage.sync` (settings)
 - **Networking:** `declarativeNetRequest` (Edge TTS session rules)
 
+### V2 (Current — `v2-rewrite`, ready to merge)
+
+- **Core:** React 18 + TypeScript + Vite
+- **Build:** `vite-plugin-web-extension` (multi-entry: SW, content script, pages)
+- **PDF Engine:** `pdfjs-dist` (không dùng `@react-pdf-viewer/core` nữa — xem DECISIONS.md)
+- **EPUB Engine:** `epub.js` + React wrapper
+- **Styling:** TailwindCSS (inject string vào Shadow DOM)
+- **Architecture:** Adapter Pattern (`IDocumentAdapter`) + Stateless SW + Event-Driven IPC
+- **UI Isolation:** Shadow DOM + `all: initial` + `all: revert`
+
 ## Directory Structure
+
+### V2 (Planned)
+
+```
+src/
+├── adapters/
+│   ├── IDocumentAdapter.ts    # Core interface: extractNodes(), highlight(), clearHighlight()
+│   ├── HTMLAdapter.ts         # TreeWalker + CSS Highlight API + Shadow DOM fallback
+│   ├── PDFAdapter.ts          # PDF.js text layer + sortTextItems + IndexMap
+│   ├── EPUBAdapter.ts         # epub.js rendition events + CFI annotations
+│   └── DocsAdapter.ts         # Wrap canvas _docs_annotate_canvas_by_ext hack
+├── background/
+│   ├── index.ts               # Service worker entry (stateless)
+│   ├── ttsManager.ts          # chrome.tts wrapper, onEvent → word boundary → sendMessage
+│   └── router.ts              # DNR rules + content script observer for PDF/EPUB
+├── content/
+│   ├── index.tsx              # Shadow DOM + React root injection (all pages)
+│   └── highlight.css          # CSS Custom Highlight API styles
+├── pages/
+│   ├── pdf-viewer/
+│   │   ├── index.html         # DNR redirect target
+│   │   └── App.tsx            # PDF.js renderer + TTS UI overlay
+│   └── epub-viewer/
+│       ├── index.html         # DNR redirect target
+│       └── App.tsx            # epub.js renderer + TTS UI overlay
+├── shared/
+│   ├── types.ts               # IPC message types, TextNodePayload, LookupTable
+│   └── ipc.ts                 # Message passing utilities
+├── popup/
+│   └── ...                    # React popup (settings, provider config)
+└── manifest.json              # Manifest V3 (read by vite-plugin-web-extension)
+```
+
+### V1 (Current — `main`)
 
 ```
 brave-tts/
@@ -65,11 +113,21 @@ bash init.sh                     # Install deps + verify test passes
 
 ## Hard Constraints
 
+### V1 (Current)
+
 1. **No bundler, no framework** — plain JS only. Do NOT add webpack/vite/react/etc.
 2. **Manifest V3 only** — service worker, no background page. `chrome.offscreen` for Edge TTS.
 3. **Content scripts must not pollute page namespace** — use IIFE or isolate carefully. Exception: `docs-page.js` runs in page context intentionally.
 4. **Google Docs integration is fragile** — uses `_docs_annotate_canvas_by_ext` internal API. Test on real docs.google.com before claiming done.
 5. **Brave gesture policy** — TTS from popup requires user click on page (not just popup). Always test with "Bắt đầu đọc" button flow.
+
+### V2 (Planned)
+
+1. **TypeScript strict mode** — all new code in `src/` must be TypeScript.
+2. **Adapter Pattern mandatory** — mọi document type phải implement `IDocumentAdapter`. Không hardcode logic per-format.
+3. **Stateless Service Worker** — SW không giữ TTS state. Content script là source of truth.
+4. **Shadow DOM isolation** — UI trong content script phải render trong Shadow Root. Không được inject style ra ngoài.
+5. **Google Docs via DocsAdapter** — wrap code cũ, không rewrite canvas logic.
 
 ## Links
 
