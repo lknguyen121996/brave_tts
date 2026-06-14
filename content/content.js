@@ -709,15 +709,20 @@
     if (STATE.paused) return;
 
     cancelCurrentSpeech();
+    const resumeIndex = STATE.currentIndex;
 
     if (STATE.settings.provider === "edge") {
-      const text = STATE.segments[STATE.currentIndex]?.text;
+      const text = STATE.segments[resumeIndex]?.text;
       if (text) {
         ensureEdgeSynthFrame().catch(() => {});
         prefetchEdgeAudio(text, STATE.settings, { priority: true });
-        prefetchEdgeAhead(STATE.currentIndex, STATE.settings);
+        prefetchEdgeAhead(resumeIndex, STATE.settings);
       }
     }
+
+    // Restart from current position with new voice — the in-flight
+    // readFromIndex exits on abort; this call resumes immediately.
+    readFromIndex(resumeIndex, null, STATE.playRequestId);
   }
 
   function applySyncedSettings(changes) {
