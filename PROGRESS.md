@@ -7,7 +7,7 @@
 - **V1 Features:** 7/8 verified (feat-04 failing — Google Docs TTS)
 - **V2 Features:** 10/10 verified ✅ — ALL PASSING
 - **Build:** ✅ `npm run build` PASS (5 entry points) + ✅ `npx tsc --noEmit` PASS
-- **Test:** 4/6 passing (V1 suites; V2 E2E pending)
+- **Test:** V1: 4/6 PASS | V2 smoke: 8/8 PASS (SW + CS injection + Popup)
 
 ## V1 Feature Verification (2026-06-14)
 
