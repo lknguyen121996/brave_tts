@@ -1,26 +1,26 @@
 // ============================================================
-// PDFAdapter — PDF Pro Overlay: Word-level Highlight
+// PDFAdapter — LineObject Highlight Manager
 // ============================================================
 //
-// Implements IDocumentAdapter for PDF documents rendered by
-// PDF.js. Uses a hybrid approach:
+// Nâng cấp từ per-word overlay sang per-line:
+// - WordObject → LineObject bằng Vertical Interval Overlap (>50% height)
+//   + Gap Detection (multi-column)
+// - 1 div/dòng thay vì 1 div/từ → DOM nodes giảm ~10x (20k → 2k)
+// - Highlight qua <span> con tạm thời (max 3/line)
+//   với trailing effects (active=1.0, prev1=0.6, prev2=0.3)
+// - CSS transition: opacity 0.2s ease-in-out
+// - Sentence boundary → clear trail ngay
+// - Binary search LineObject[] cho word lookup
 //
 // Layer stack (per page container):
 //   z-index: 2  TextLayer <div>          opacity: 0
 //               (selection/copy/find via <span> elements)
 //   z-index: 1  Overlay <div>            pointer-events: none
-//               └─ <div> x N (pure rects, zero text content)
+//               └─ LineObject div × L    (L = số dòng, ~2000)
+//                    └─ <span> × 0-3    (temporary, TTS-driven)
 //   z-index: 0  <canvas>                 PDF.js render
 //
-// Strategy (see DECISIONS.md § "PDF Pro Overlay"):
-// 1. page.getTextContent() → reconstructWords() → WordObject[]
-//    per page, with viewport.convertToViewportPoint() mapping
-// 2. Virtualiser hydrates overlay divs for visible pages only
-// 3. Highlight via CSS class on both overlay div + textLayer span
-// 4. Binary search on startCharIndex/endCharIndex for TTS sync
-// 5. Memory: WordObject[] released on page unmount
-//
-// Ghi đè trực tiếp PDFAdapter.ts (v2-05) — xem grill session.
+// Ghi đè trực tiếp PDFAdapter.ts — see PROGRESS.md § "LineObject Highlight Manager"
 
 import { IDocumentAdapter, AdapterDefaults } from "@adapters/IDocumentAdapter";
 import type {
@@ -37,7 +37,7 @@ type PdfViewport = pdfjsLib.PageViewport;
 // ---- Internal types ----
 
 interface WordObject {
-  id: string; // e.g. "w_42"
+  id: string; // e.g. "w_1_42"
   text: string;
   /** Character offset in the full concatenated text */
   startCharIndex: number;
@@ -50,8 +50,19 @@ interface WordObject {
   height: number;
 }
 
+interface LineObject {
+  id: string; // e.g. "L_1_0"
+  /** Bounding box in viewport space (union of all words in this line) */
+  bbox: { x: number; y: number; width: number; height: number };
+  startCharIndex: number;
+  endCharIndex: number;
+  /** Words in this line, sorted left-to-right */
+  words: WordObject[];
+}
+
 interface PageData {
   words: WordObject[];
+  lines: LineObject[];
   container: HTMLElement | null;
   overlayEl: HTMLDivElement | null;
   textDivs: HTMLSpanElement[];
@@ -68,6 +79,8 @@ interface SortableItem {
 const Y_CLUSTER_THRESHOLD = 5; // px — words within this Y diff are same line
 const HIGHLIGHT_CLASS = "tts-active-word";
 const HIGHLIGHT_CSS = "tts-active-word-css";
+const MAX_TRAIL = 3; // Max highlight spans per line
+const GAP_CHAR_MULTIPLIER = 3; // deltaX > avg_char * 3 → column break
 
 // ---- PDFAdapter Class ----
 
@@ -79,16 +92,22 @@ export class PDFAdapter implements IDocumentAdapter {
   /** Word data per page number (1-indexed). Null if page not yet parsed. */
   private pageWords = new Map<number, WordObject[]>();
 
+  /** Line data per page number (1-indexed). Built from words during hydrate. */
+  private lineMap = new Map<number, LineObject[]>();
+
   /** Per-page DOM: container ref + overlay div + textLayer spans */
   private pages = new Map<number, PageData>();
 
-  /** All overlay divs keyed by word ID (across visible pages only) */
-  private overlayDivs = new Map<string, HTMLDivElement>();
+  /** LineObject overlay divs keyed by line ID (across visible pages only) */
+  private lineDivs = new Map<string, HTMLDivElement>();
 
   /** All textLayer spans keyed by word ID (across visible pages) */
   private textLayerSpans = new Map<string, HTMLSpanElement>();
 
-  /** Active highlighted word IDs */
+  /** Trail spans per line: lineId → span[] (max MAX_TRAIL, newest last) */
+  private trailQueues = new Map<string, HTMLSpanElement[]>();
+
+  /** Active highlighted word IDs (for textLayer span cleanup) */
   private activeWordIds = new Set<string>();
 
   /** Injected highlight CSS style element */
@@ -117,6 +136,7 @@ export class PDFAdapter implements IDocumentAdapter {
     // Remove existing data for this page if reparsing
     this.dehydratePage(pageNum);
     this.pageWords.delete(pageNum);
+    this.lineMap.delete(pageNum);
 
     // Step 1: Sort items into logical reading order
     const sorted = this.sortByReadOrder(items);
@@ -124,12 +144,17 @@ export class PDFAdapter implements IDocumentAdapter {
     // Step 2: Reconstruct words from fragmented TextItems
     const words = this.reconstructWords(sorted, viewport, pageNum);
 
-    // Step 3: Cache word data (no DOM yet)
-    this.pageWords.set(pageNum, words);
+    // Step 3: Build lines from words
+    const lines = this.buildLines(words);
 
-    // Step 4: Init page data (overlay + spans created on hydrate)
+    // Step 4: Cache data (no DOM yet)
+    this.pageWords.set(pageNum, words);
+    this.lineMap.set(pageNum, lines);
+
+    // Step 5: Init page data (overlay + spans created on hydrate)
     this.pages.set(pageNum, {
       words,
+      lines,
       container: null,
       overlayEl: null,
       textDivs: [],
@@ -142,6 +167,8 @@ export class PDFAdapter implements IDocumentAdapter {
    * Hydrate the overlay DOM for a page that just became visible.
    * Called by the virtualiser when a page mounts.
    *
+   * Creates LineObject divs (1 per line) instead of per-word divs.
+   *
    * @param pageNum 1-indexed page number
    * @param container The page container element (position: relative)
    * @returns The overlay div element (appended to container)
@@ -149,7 +176,8 @@ export class PDFAdapter implements IDocumentAdapter {
   hydratePage(pageNum: number, container: HTMLElement): HTMLDivElement | null {
     const page = this.pages.get(pageNum);
     const words = this.pageWords.get(pageNum);
-    if (!page || !words || words.length === 0) return null;
+    const lines = this.lineMap.get(pageNum);
+    if (!page || !words || words.length === 0 || !lines) return null;
 
     // Dehydrate first if already hydrated
     if (page.overlayEl) this.dehydratePage(pageNum);
@@ -165,7 +193,8 @@ export class PDFAdapter implements IDocumentAdapter {
     // Inject highlight CSS into document once
     this.ensureHighlightStyle();
 
-    // Create overlay div
+    // ---- Overlay layer (z-index: 1) ----
+    // Create 1 div per LineObject (pure rects, ZERO text)
     const overlay = document.createElement("div");
     overlay.className = "brave-tts-pdf-overlay";
     overlay.style.cssText =
@@ -173,25 +202,25 @@ export class PDFAdapter implements IDocumentAdapter {
       "pointer-events: none; z-index: 1; contain: layout style;";
     overlay.setAttribute("data-brave-tts-page", String(pageNum));
 
-    // Create word-level overlay divs (pure rects, ZERO text)
-    for (const word of words) {
+    for (const line of lines) {
       const div = document.createElement("div");
-      div.id = word.id;
-      div.setAttribute("data-brave-tts-word", word.id);
+      div.id = line.id;
+      div.setAttribute("data-brave-tts-line", line.id);
       div.style.cssText =
         `position: absolute; ` +
-        `left: ${word.x}px; ` +
-        `top: ${word.y}px; ` +
-        `width: ${word.width}px; ` +
-        `height: ${word.height}px; ` +
-        // No textContent — pure visual rectangle
-        "pointer-events: none;";
+        `left: ${line.bbox.x}px; ` +
+        `top: ${line.bbox.y}px; ` +
+        `width: ${line.bbox.width}px; ` +
+        `height: ${line.bbox.height}px; ` +
+        // No textContent — pure visual rectangle container
+        "pointer-events: none;" +
+        "overflow: visible;"; // Allow spans to extend if needed
       overlay.appendChild(div);
-      this.overlayDivs.set(word.id, div);
+      this.lineDivs.set(line.id, div);
     }
 
-    // Create textLayer spans for selection/copy (opacity: 0)
-    // These sit at z-index: 2 above the overlay
+    // ---- TextLayer (z-index: 2, opacity: 0) ----
+    // Per-word spans for selection/copy/find
     const textLayer = document.createElement("div");
     textLayer.className = "brave-tts-text-layer";
     textLayer.style.cssText =
@@ -228,19 +257,24 @@ export class PDFAdapter implements IDocumentAdapter {
   /**
    * Dehydrate: remove overlay and textLayer DOM for a page.
    * Called by the virtualiser when a page unmounts.
-   * Frees DOM nodes — WordObject[] data stays cached.
+   * Frees DOM nodes — WordObject[] and LineObject[] data stays cached.
    */
   dehydratePage(pageNum: number): void {
     const page = this.pages.get(pageNum);
     if (!page) return;
 
-    // Remove overlay divs from map
-    if (page.overlayEl) {
-      const wordDivs = page.overlayEl.querySelectorAll("[data-brave-tts-word]");
-      for (const div of wordDivs) {
-        const id = div.getAttribute("data-brave-tts-word")!;
-        this.overlayDivs.delete(id);
+    // Clear trail spans for this page's lines
+    for (const line of page.lines) {
+      const trail = this.trailQueues.get(line.id);
+      if (trail) {
+        for (const span of trail) span.remove();
+        this.trailQueues.delete(line.id);
       }
+      this.lineDivs.delete(line.id);
+    }
+
+    // Remove overlay div
+    if (page.overlayEl) {
       page.overlayEl.remove();
       page.overlayEl = null;
     }
@@ -264,12 +298,13 @@ export class PDFAdapter implements IDocumentAdapter {
   }
 
   /**
-   * Release ALL data for a page (both DOM and WordObject[] data).
+   * Release ALL data for a page (both DOM and data).
    * Called when user closes the PDF or for aggressive memory cleanup.
    */
   releasePageData(pageNum: number): void {
     this.dehydratePage(pageNum);
     this.pageWords.delete(pageNum);
+    this.lineMap.delete(pageNum);
     this.pages.delete(pageNum);
   }
 
@@ -279,9 +314,11 @@ export class PDFAdapter implements IDocumentAdapter {
       this.dehydratePage(pageNum);
     }
     this.pageWords.clear();
+    this.lineMap.clear();
     this.pages.clear();
-    this.overlayDivs.clear();
+    this.lineDivs.clear();
     this.textLayerSpans.clear();
+    this.trailQueues.clear();
     this.activeWordIds.clear();
     this.payloads = [];
     this.lookupTable = [];
@@ -292,7 +329,7 @@ export class PDFAdapter implements IDocumentAdapter {
     }
   }
 
-  /** Get all parsed pages as a flat array of WordObject[] */
+  /** Get all parsed words as a flat array (across all pages, in order). */
   getAllWords(): WordObject[] {
     const all: WordObject[] = [];
     for (const words of this.pageWords.values()) {
@@ -322,7 +359,6 @@ export class PDFAdapter implements IDocumentAdapter {
           text: word.text,
           charIndex: globalCharIndex,
           charLength: word.text.length,
-          // domNode = textLayer span for this word (for selection)
           domNode: this.textLayerSpans.get(word.id) ?? null,
         });
         globalCharIndex += word.text.length;
@@ -354,45 +390,76 @@ export class PDFAdapter implements IDocumentAdapter {
     return AdapterDefaults.getFullText(nodes);
   }
 
-  // ---- Highlight (Hybrid: overlay div + textLayer span) ----
+  // ---- Highlight (Trailing spans in LineObject divs) ----
 
+  /**
+   * Highlight the given node IDs using temporary <span> children
+   * inside LineObject divs, with trailing effects.
+   *
+   * Each call ADDS a new span — does NOT clear previous ones.
+   * Trail management: max 3 spans/line, opacities 1.0 → 0.6 → 0.3 → removed.
+   * Sentence boundary (., !, ?): clears ALL trails immediately.
+   */
   highlight(nodeIds: string[]): void {
-    this.clearHighlight();
-    this.activeWordIds = new Set(nodeIds);
-
-    for (const id of nodeIds) {
-      // Find the WordObject to get its word.id
-      // The nodeId from payload is "p0", "p1", etc.
-      // We need to map it to overlay div "w_42"
-      const wordId = this.payloadToWordId(id);
+    for (const nodeId of nodeIds) {
+      const wordId = this.payloadToWordId(nodeId);
       if (!wordId) continue;
 
-      // Highlight overlay div (z:1, visual)
-      const overlayDiv = this.overlayDivs.get(wordId);
-      if (overlayDiv) {
-        overlayDiv.classList.add(HIGHLIGHT_CLASS);
+      const lineObj = this.findLineByWordId(wordId);
+      if (!lineObj) continue;
+
+      const word = lineObj.words.find((w) => w.id === wordId);
+      if (!word) continue;
+
+      const lineDiv = this.lineDivs.get(lineObj.id);
+      if (!lineDiv) continue;
+
+      // Get or create trail queue for this line
+      let trail = this.trailQueues.get(lineObj.id);
+      if (!trail) {
+        trail = [];
+        this.trailQueues.set(lineObj.id, trail);
       }
 
-      // Highlight textLayer span (z:2, selection layer)
-      const span = this.textLayerSpans.get(wordId);
-      if (span) {
-        span.classList.add(HIGHLIGHT_CLASS);
+      // Create highlight span (positioned relative to line div)
+      const span = document.createElement("span");
+      span.className = "brave-tts-highlight-span";
+      span.style.cssText =
+        `position: absolute; ` +
+        `left: ${word.x - lineObj.bbox.x}px; ` +
+        `top: 0; ` +
+        `width: ${word.width}px; ` +
+        `height: 100%; ` +
+        `opacity: 1.0; ` +
+        `transition: opacity 0.2s ease-in-out; ` +
+        `pointer-events: none;`;
+      lineDiv.appendChild(span);
+
+      // Push to trail
+      trail.push(span);
+
+      // Trim to MAX_TRAIL (3) — remove oldest
+      while (trail.length > MAX_TRAIL) {
+        const removed = trail.shift();
+        removed?.remove();
+      }
+
+      // Update trail opacities: newest=1.0, prev1=0.6, prev2=0.3
+      this.updateTrailOpacities(trail);
+
+      // Also track in activeWordIds for textLayer cleanup
+      this.activeWordIds.add(wordId);
+
+      // Check sentence boundary → clear ALL trails globally
+      if (/[.!?]$/.test(word.text)) {
+        this.clearAllTrails();
       }
     }
   }
 
+  /** Remove ALL highlight spans and textLayer highlights. */
   clearHighlight(): void {
-    // Remove from overlay divs
-    for (const id of this.activeWordIds) {
-      const wordId = this.payloadToWordId(id);
-      if (!wordId) continue;
-
-      const overlayDiv = this.overlayDivs.get(wordId);
-      if (overlayDiv) overlayDiv.classList.remove(HIGHLIGHT_CLASS);
-
-      const span = this.textLayerSpans.get(wordId);
-      if (span) span.classList.remove(HIGHLIGHT_CLASS);
-    }
+    this.clearAllTrails();
     this.activeWordIds.clear();
   }
 
@@ -402,17 +469,144 @@ export class PDFAdapter implements IDocumentAdapter {
     const wordId = this.payloadToWordId(nodeId);
     if (!wordId) return;
 
-    // Find which page contains this word
-    for (const [pageNum, page] of this.pages) {
-      if (page.container) {
-        const div = page.container.querySelector(`[data-brave-tts-word="${wordId}"]`);
-        if (div) {
-          // Scroll the page into view
-          div.scrollIntoView({ behavior: "smooth", block: "center" });
-          return;
+    const lineObj = this.findLineByWordId(wordId);
+    if (!lineObj) return;
+
+    const lineDiv = this.lineDivs.get(lineObj.id);
+    if (lineDiv) {
+      lineDiv.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+
+  // ---- Private: Line Building ----
+
+  /**
+   * Group WordObjects into LineObjects using:
+   * 1. Vertical Interval Overlap (>50% height) — handles superscript/subscript
+   * 2. Gap Detection (deltaX > avg_char * 3) — handles multi-column layout
+   */
+  private buildLines(words: WordObject[]): LineObject[] {
+    if (words.length === 0) return [];
+
+    // Step 1: Sort by Y center for clustering
+    const sorted = [...words].sort((a, b) => {
+      const aCY = a.y + a.height / 2;
+      const bCY = b.y + b.height / 2;
+      return aCY - bCY;
+    });
+
+    // Step 2: Cluster by vertical interval overlap (>50%)
+    const clusters: WordObject[][] = [];
+    {
+      const first = sorted[0]!;
+      let currentCluster: WordObject[] = [first];
+      let clusterMinY = first.y;
+      let clusterMaxY = first.y + first.height;
+      let clusterHeights: number[] = [first.height];
+
+      for (let i = 1; i < sorted.length; i++) {
+        const word = sorted[i]!;
+
+        // Compute vertical overlap between word and cluster bbox
+        const overlapPx = Math.max(
+          0,
+          Math.min(clusterMaxY, word.y + word.height) -
+            Math.max(clusterMinY, word.y)
+        );
+        const avgH =
+          clusterHeights.reduce((s, h) => s + h, 0) / clusterHeights.length;
+        const minH = Math.min(avgH, word.height);
+        const overlapRatio = minH > 0 ? overlapPx / minH : 0;
+
+        if (overlapRatio > 0.5) {
+          currentCluster.push(word);
+          clusterMinY = Math.min(clusterMinY, word.y);
+          clusterMaxY = Math.max(clusterMaxY, word.y + word.height);
+          clusterHeights.push(word.height);
+        } else {
+          clusters.push(currentCluster);
+          currentCluster = [word];
+          clusterMinY = word.y;
+          clusterMaxY = word.y + word.height;
+          clusterHeights = [word.height];
         }
       }
+      clusters.push(currentCluster);
     }
+
+    // Step 3: Within each cluster, sort by X, detect gaps, split columns
+    const lines: LineObject[] = [];
+    let lineIndex = 0;
+
+    for (const cluster of clusters) {
+      // Sort left-to-right
+      cluster.sort((a, b) => a.x - b.x);
+
+      // Compute avg char width for gap detection
+      let totalChars = 0;
+      let totalWidth = 0;
+      for (const w of cluster) {
+        totalChars += w.text.length;
+        totalWidth += w.width;
+      }
+      const avgCharWidth = totalChars > 0 ? totalWidth / totalChars : 0;
+      const gapThreshold = avgCharWidth * GAP_CHAR_MULTIPLIER;
+
+      // Split by horizontal gaps (multi-column)
+      const columns: WordObject[][] = [];
+      {
+        let currentCol: WordObject[] = [cluster[0]!];
+
+        for (let i = 1; i < cluster.length; i++) {
+          const prev = cluster[i - 1]!;
+          const curr = cluster[i]!;
+          const gap = curr.x - (prev.x + prev.width);
+
+          if (gapThreshold > 0 && gap > gapThreshold) {
+            columns.push(currentCol);
+            currentCol = [curr];
+          } else {
+            currentCol.push(curr);
+          }
+        }
+        columns.push(currentCol);
+      }
+
+      // Create LineObject for each column
+      for (const colWords of columns) {
+        if (colWords.length === 0) continue;
+
+        const firstW = colWords[0]!;
+        const lastW = colWords[colWords.length - 1]!;
+
+        // Compute union bbox
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const w of colWords) {
+          minX = Math.min(minX, w.x);
+          minY = Math.min(minY, w.y);
+          maxX = Math.max(maxX, w.x + w.width);
+          maxY = Math.max(maxY, w.y + w.height);
+        }
+
+        lines.push({
+          id: `L_${lineIndex++}`,
+          bbox: {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+          },
+          startCharIndex: firstW.startCharIndex,
+          endCharIndex: lastW.endCharIndex,
+          words: colWords,
+        });
+      }
+    }
+
+    return lines;
   }
 
   // ---- Private: Word Reconstruction ----
@@ -481,7 +675,6 @@ export class PDFAdapter implements IDocumentAdapter {
   ): WordObject[] {
     const words: WordObject[] = [];
     let wordIndex = 0;
-    let globalCharOffset = 0; // Will be computed after all words built
 
     let currentText = "";
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -561,16 +754,11 @@ export class PDFAdapter implements IDocumentAdapter {
     const style = document.createElement("style");
     style.id = HIGHLIGHT_CSS;
     style.textContent = `
-      .${HIGHLIGHT_CLASS} {
+      .brave-tts-highlight-span {
         background-color: #a3e635 !important;
         mix-blend-mode: multiply;
       }
-      /* Overlay div highlight */
-      [data-brave-tts-word].${HIGHLIGHT_CLASS} {
-        background-color: #a3e635 !important;
-        mix-blend-mode: multiply;
-      }
-      /* TextLayer span highlight (selection layer) */
+      /* TextLayer span highlight (selection layer, opacity: 0) */
       [data-word-id].${HIGHLIGHT_CLASS} {
         background-color: #a3e635 !important;
         mix-blend-mode: multiply;
@@ -580,7 +768,7 @@ export class PDFAdapter implements IDocumentAdapter {
     this.highlightStyleEl = style;
   }
 
-  // ---- Private: ID Mapping ----
+  // ---- Private: ID Mapping & Search ----
 
   /**
    * Map a payload ID ("p0", "p1", ...) to a word ID ("w_1_0", ...).
@@ -596,5 +784,77 @@ export class PDFAdapter implements IDocumentAdapter {
     const allWords = this.getAllWords();
     const word = allWords[index];
     return word?.id ?? null;
+  }
+
+  /**
+   * Find the LineObject containing a word by its ID.
+   * Uses binary search on LineObject[].startCharIndex/endCharIndex.
+   * O(log L) where L = number of lines in the page.
+   */
+  private findLineByWordId(wordId: string): LineObject | null {
+    // wordId format: "w_pageNum_wordIndex"
+    const parts = wordId.split("_");
+    if (!parts[1]) return null;
+    const pageNum = parseInt(parts[1], 10);
+    if (isNaN(pageNum)) return null;
+
+    const lines = this.lineMap.get(pageNum);
+    if (!lines || lines.length === 0) return null;
+
+    // Get the word to find its charIndex
+    const words = this.pageWords.get(pageNum);
+    const word = words?.find((w) => w.id === wordId);
+    if (!word) return null;
+
+    // Binary search on LineObject[] by charIndex range
+    const targetChar = word.startCharIndex;
+    let lo = 0;
+    let hi = lines.length - 1;
+
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const line = lines[mid]!;
+
+      if (
+        targetChar >= line.startCharIndex &&
+        targetChar <= line.endCharIndex
+      ) {
+        return line;
+      }
+
+      if (targetChar < line.startCharIndex) {
+        hi = mid - 1;
+      } else {
+        lo = mid + 1;
+      }
+    }
+
+    return null;
+  }
+
+  /** Clear ALL trail spans across all lines and reset trail queues. */
+  private clearAllTrails(): void {
+    for (const [, trail] of this.trailQueues) {
+      for (const span of trail) {
+        span.remove();
+      }
+    }
+    this.trailQueues.clear();
+  }
+
+  /** Update opacity for trail spans: newest=1.0, prev1=0.6, prev2=0.3. */
+  private updateTrailOpacities(trail: HTMLSpanElement[]): void {
+    const opacities: Record<number, string> = {
+      [trail.length - 1]: "1.0",
+      [trail.length - 2]: "0.6",
+      [trail.length - 3]: "0.3",
+    };
+
+    trail.forEach((span, i) => {
+      const opacity = opacities[i];
+      if (opacity !== undefined) {
+        span.style.opacity = opacity;
+      }
+    });
   }
 }
