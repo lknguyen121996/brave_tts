@@ -540,7 +540,12 @@
     return resolveReadStart(range.startContainer, range.startOffset);
   }
 
+  function isExtensionAlive() {
+    return typeof chrome !== "undefined" && chrome.runtime?.id;
+  }
+
   function loadStoredSettings() {
+    if (!isExtensionAlive()) return Promise.resolve({ rate: 1 });
     return new Promise((resolve) => {
       chrome.storage.sync.get(SETTINGS_FIELDS, (data) => {
         resolve({ ...data, rate: clampRate(data.rate || 1) });
@@ -1088,7 +1093,7 @@
     const changed = next !== clampRate(STATE.settings.rate || 1);
     STATE.settings.rate = next;
     syncToolbarRate(next);
-    chrome.storage.sync.set({ rate: next });
+    if (isExtensionAlive()) chrome.storage.sync.set({ rate: next });
 
     if (!changed || !STATE.running || STATE.paused) return;
 
@@ -1726,7 +1731,7 @@
   document.addEventListener("pointermove", onHoverPointerMove, { passive: true });
   document.addEventListener("mouseleave", onHoverPointerLeave, { passive: true });
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (isExtensionAlive()) chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "START_READING") {
       startReading(msg.settings);
       sendResponse({ ok: true });
@@ -1798,7 +1803,7 @@
     });
   }
 
-  chrome.storage.onChanged.addListener((changes, area) => {
+  if (isExtensionAlive()) chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     applySyncedSettings(changes);
   });

@@ -212,5 +212,14 @@
     "state": "passing",
     "depends_on": [],
     "priority": "P0"
+  },
+  {
+    "id": "bug-09",
+    "title": "[P0] Fix Extension context invalidated crash",
+    "description": "Khi extension reload/update, content script vẫn chạy nhưng chrome.* APIs throw Extension context invalidated. Thêm isExtensionAlive() guard cho loadStoredSettings, setRate, onMessage, onChanged.",
+    "verification": "node -c content/content.js && cd test && npm test",
+    "state": "passing",
+    "depends_on": [],
+    "priority": "P0"
   }
 ]
