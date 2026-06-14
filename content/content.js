@@ -544,13 +544,26 @@
     return typeof chrome !== "undefined" && chrome.runtime?.id;
   }
 
-  function loadStoredSettings() {
-    if (!isExtensionAlive()) return Promise.resolve({ rate: 1 });
+  function safeStorageGet(keys) {
+    if (!isExtensionAlive()) return Promise.resolve({});
     return new Promise((resolve) => {
-      chrome.storage.sync.get(SETTINGS_FIELDS, (data) => {
-        resolve({ ...data, rate: clampRate(data.rate || 1) });
-      });
+      try {
+        chrome.storage.sync.get(keys, (data) => {
+          const err = chrome.runtime.lastError;
+          if (err || !isExtensionAlive()) { resolve({}); return; }
+          resolve(data || {});
+        });
+      } catch (_) {
+        resolve({});
+      }
     });
+  }
+
+  function loadStoredSettings() {
+    return safeStorageGet(SETTINGS_FIELDS).then((data) => ({
+      ...data,
+      rate: clampRate(data.rate || 1),
+    }));
   }
 
   function ensureVoices() {
@@ -1093,7 +1106,9 @@
     const changed = next !== clampRate(STATE.settings.rate || 1);
     STATE.settings.rate = next;
     syncToolbarRate(next);
-    if (isExtensionAlive()) chrome.storage.sync.set({ rate: next });
+    try {
+      if (isExtensionAlive()) chrome.storage.sync.set({ rate: next });
+    } catch (_) { /* extension context gone */ }
 
     if (!changed || !STATE.running || STATE.paused) return;
 
