@@ -4,7 +4,7 @@
     "title": "Web Speech TTS + Highlight + Auto-scroll",
     "description": "Đọc văn bản bằng Web Speech API, highlight theo câu/từ đang đọc, tự động cuộn trang theo tiến độ.",
     "verification": "cd test && npm test",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": []
   },
   {
@@ -12,7 +12,7 @@
     "title": "Hover to Play & Jump",
     "description": "Hover 500ms trên đoạn văn → hiện nút ▶ để bắt đầu đọc. Đang đọc thì hover chỗ khác → hiện nút ↪ để nhảy đến vị trí mới.",
     "verification": "cd test && npm test",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": [
       "feat-01"
     ]
@@ -22,7 +22,7 @@
     "title": "Edge TTS Provider",
     "description": "TTS miễn phí qua Microsoft Edge Read Aloud, dùng WebSocket + offscreen document. Hỗ trợ chọn giọng, điều chỉnh tốc độ.",
     "verification": "cd test && npm run test:edge",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": [
       "feat-01"
     ]
@@ -32,7 +32,7 @@
     "title": "Google Docs TTS với Canvas",
     "description": "Đọc văn bản trong Google Docs, trích xuất nội dung từ annotated canvas + SVG aria-label. Hỗ trợ double-click và hover để bắt đầu đọc.",
     "verification": "cd test && npm run test:docs",
-    "state": "not_started",
+    "state": "failing",
     "depends_on": [
       "feat-01"
     ]
@@ -42,7 +42,7 @@
     "title": "Toolbar & Playback Controls",
     "description": "Toolbar trên trang: pause/resume, dừng hẳn, chỉnh tốc độ (0.5x-3x), nút 'Back on track' khi auto-scroll bị lệch khỏi vị trí đọc.",
     "verification": "cd test && npm test",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": [
       "feat-01"
     ]
@@ -52,7 +52,7 @@
     "title": "Context Menu: Đọc từ đây",
     "description": "Click chuột phải trên trang → 'Đọc từ đây' trong context menu. Extension bắt đầu đọc từ vị trí click, highlight và auto-scroll theo.",
     "verification": "cd test && npm test",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": [
       "feat-01"
     ]
@@ -62,7 +62,7 @@
     "title": "Popup Settings & Provider Config",
     "description": "Popup cho phép chọn TTS provider (Web Speech / Edge / Azure / Google), chọn giọng, chỉnh tốc độ. Cài đặt lưu qua chrome.storage.sync. Nút 'Đọc trang' với Brave gesture workaround.",
     "verification": "cd test && npm test",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": [
       "feat-01"
     ]
@@ -72,7 +72,7 @@
     "title": "Azure & Google Cloud TTS Providers",
     "description": "Hỗ trợ Azure Speech SDK (key + region) và Google Cloud TTS API (API key). Cho phép nhập key trong popup, chọn giọng theo provider.",
     "verification": "cd test && npm test",
-    "state": "not_started",
+    "state": "passing",
     "depends_on": [
       "feat-01",
       "feat-07"
@@ -239,12 +239,135 @@
     "title": "Extension reload recovery E2E test",
     "description": "Test reading survives extension reload, content script re-injects, hover works after reload, listener leak check.",
     "verification": "cd test && npm run test:reload",
-    "state": "passing",
+    "state": "failing",
     "depends_on": [
       "bug-02",
       "bug-05",
       "bug-09"
     ],
     "priority": "P1"
+  },
+  {
+    "id": "v2-01",
+    "title": "V2: Core Contracts & Types",
+    "description": "Định nghĩa IDocumentAdapter interface, TextNodePayload, LookupTable, IPC message types. Setup TypeScript + Vite + vite-plugin-web-extension skeleton.",
+    "verification": "npx tsc --noEmit && node -e \"console.log('types OK')\"",
+    "state": "passing",
+    "depends_on": [],
+    "v2": true
+  },
+  {
+    "id": "v2-02",
+    "title": "V2: Stateless Service Worker + TTS Manager",
+    "description": "SW làm 'cái loa': nhận payload [text, startIndex] → chrome.tts.speak() → onEvent word boundary → gửi charIndex về content script. Stateless, không persist.",
+    "verification": "TBD — E2E: SW survives kill + resume",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-03",
+    "title": "V2: Hybrid Interception cho PDF/EPUB",
+    "description": "3 bậc: (1) DNR redirect HTTP/S PDF/EPUB → internal viewer, (2) Content Script observer detect file:// và iframe/embed, (3) web_accessible_resources + onboarding UI cho file:// permissions.",
+    "verification": "TBD — E2E: redirect PDF link, open local PDF, PDF in iframe",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-04",
+    "title": "V2: HTML Adapter + Shadow DOM UI",
+    "description": "HTMLAdapter dùng TreeWalker extract text nodes → LookupTable. Content script inject Shadow DOM + React root. UI playback controls + highlight dùng CSS Custom Highlight API (fallback <mark>).",
+    "verification": "TBD — E2E: UI test suite ported sang V2",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01",
+      "v2-02"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-05",
+    "title": "V2: PDF Viewer + PDFAdapter",
+    "description": "PDF viewer page dùng PDF.js canvas rendering. PDFAdapter: getTextContent() → sortTextItems (mượn từ PDF.js) → IndexMap sorted. Highlight dùng CSS class trên .textLayer span. Xử lý multi-column qua Y-clustering.",
+    "verification": "TBD — E2E: PDF load, text extract, highlight sync, multi-column",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01",
+      "v2-02",
+      "v2-03"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-06",
+    "title": "V2: EPUB Viewer + EPUBAdapter",
+    "description": "EPUB viewer page dùng epub.js. EPUBAdapter: rendition.on('rendered') → access view.document → traverse DOM → LookupTable. Highlight qua CSS injection vào chapterDocument. Auto-pagination qua rendition.on('relocated').",
+    "verification": "TBD — E2E: EPUB load, text extract, highlight sync, chapter transition",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01",
+      "v2-02",
+      "v2-03"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-07",
+    "title": "V2: DocsAdapter — Google Docs Canvas",
+    "description": "Wrap logic canvas hack hiện tại (_docs_annotate_canvas_by_ext, SVG aria-label, Closure extraction) vào DocsAdapter implements IDocumentAdapter. Port sang TypeScript, giữ nguyên logic core.",
+    "verification": "TBD — E2E: Google Docs test suite ported sang V2",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01",
+      "v2-04"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-08",
+    "title": "V2: Popup Settings (React) + Provider Config",
+    "description": "Popup React: chọn TTS provider, giọng, tốc độ, voice. Lưu chrome.storage.sync. Nút 'Đọc trang' với Brave gesture workaround. Port từ popup V1 + thêm config cho các provider mới.",
+    "verification": "TBD — E2E: popup test suite ported sang V2",
+    "state": "not_started",
+    "depends_on": [
+      "v2-01",
+      "v2-02"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-09",
+    "title": "V2: 4 TTS Providers Port",
+    "description": "Port Web Speech, Edge TTS (WebSocket + offscreen), Azure Speech SDK, Google Cloud TTS API sang TypeScript. Logic TTS đã ổn định từ V1, chỉ cần wrap trong ttsManager.ts mới.",
+    "verification": "TBD — E2E: cả 3 test suites (UI, Edge, Docs) pass trên V2",
+    "state": "not_started",
+    "depends_on": [
+      "v2-02",
+      "v2-04",
+      "v2-07",
+      "v2-08"
+    ],
+    "v2": true
+  },
+  {
+    "id": "v2-10",
+    "title": "V2: Full Integration & Cut-over",
+    "description": "Verify toàn bộ V2 feature set. Merge v2-rewrite → main. Archive V1 code. Cập nhật tất cả documentation.",
+    "verification": "TBD — Full test suite + manual smoke test trên Chrome/Brave",
+    "state": "not_started",
+    "depends_on": [
+      "v2-04",
+      "v2-05",
+      "v2-06",
+      "v2-07",
+      "v2-08",
+      "v2-09"
+    ],
+    "v2": true
   }
 ]

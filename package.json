@@ -1,0 +1,24 @@
+{
+  "name": "brave-read-aloud",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Brave Read Aloud - TTS extension for Chrome/Brave (V2 rewrite)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.280",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.0",
+    "vite": "^6.0.0",
+    "vite-plugin-web-extension": "^4.5.0"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  }
+}
