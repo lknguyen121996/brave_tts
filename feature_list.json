@@ -203,5 +203,14 @@
       "bug-05"
     ],
     "priority": "P2"
+  },
+  {
+    "id": "bug-08",
+    "title": "[P0] Fix i18n double-injection crash",
+    "description": "shared/i18n.js không có guard chống re-injection. Khi popup gọi injectAndStart, file bị bơm lại vào trang đã có → BRAVE_TTS_STRINGS declared twice → SyntaxError. Fix: thêm typeof guard đầu file.",
+    "verification": "node -c shared/i18n.js && cd test && npm test",
+    "state": "passing",
+    "depends_on": [],
+    "priority": "P0"
   }
 ]

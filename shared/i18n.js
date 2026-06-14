@@ -1,4 +1,10 @@
 /* global self, window */
+// Guard against re-injection (popup injectAndStart re-injects this file)
+if (typeof BRAVE_TTS_STRINGS !== "undefined") {
+  if (typeof window !== "undefined") window.__braveTtsI18nLoaded = true;
+  if (typeof self !== "undefined") self.__braveTtsI18nLoaded = true;
+  /* return early — already loaded */
+} else {
 const BRAVE_TTS_STRINGS = {
   vi: {
     "popup.subtitle": "Đọc to, highlight & tự cuộn trang",
@@ -281,3 +287,4 @@ if (typeof window !== "undefined") {
   window.braveTtsApplyDom = braveTtsApplyDom;
   window.BRAVE_TTS_STRINGS = BRAVE_TTS_STRINGS;
 }
+} // end guard block
