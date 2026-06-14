@@ -24,7 +24,12 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["src/pages/pdf-viewer/index.html", "src/pages/epub-viewer/index.html"],
+      "resources": [
+        "src/pages/pdf-viewer/index.html",
+        "src/pages/epub-viewer/index.html",
+        "pdf-reader/pdf.min.js",
+        "pdf-reader/pdf.worker.min.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
@@ -43,6 +48,19 @@
   },
 
   "content_scripts": [
+    {
+      "matches": ["*://docs.google.com/*"],
+      "js": ["src/content/docs-bridge-inject.ts"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/interception.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/index.tsx"],

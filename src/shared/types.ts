@@ -202,6 +202,15 @@ export interface VoicesResponse {
 /** Messages sent TO the popup */
 export type ToPopupMessage = StatusResponse | VoicesResponse;
 
+// ---- Interception (v2-03) ----
+
+/** Sent from content script to SW when a file:// URL is navigated to.
+ * Fire-and-forget — SW may use this to trigger onboarding UI. */
+export interface FileUrlDetectedMessage {
+  type: "FILE_URL_DETECTED";
+  url: string;
+}
+
 // ---- Generic Message Envelope ----
 // Convenience union of ALL messages in the system.
 
@@ -209,4 +218,5 @@ export type AppMessage =
   | ToContentScriptMessage
   | FromContentScriptMessage
   | ToContentScriptEvent
-  | ToPopupMessage;
+  | ToPopupMessage
+  | FileUrlDetectedMessage;

@@ -1,232 +1,123 @@
 // ============================================================
-// Stateless Service Worker — Brave Read Aloud V2
+// Service Worker — Brave Read Aloud V2
 // ============================================================
 //
-// The service worker is a "speaker" (cái loa): it receives TTS
-// speech requests from the content script, speaks via chrome.tts,
-// and forwards word/sentence/end events back.
+// Stateless "loudspeaker" worker:
+//   1. Registers DNR rules for PDF/EPUB interception (v2-03)
+//   2. Creates context menu "Read from here" entry
+//   3. Routes popup ↔ content script messages
+//   4. Handles TTS speak/stop via chrome.tts API (v2-02)
 //
-// It is STATELESS: no text, index, or settings stored. If killed,
-// the content script detects this and sends a RESUME_PAYLOAD to
-// re-sync. The SW processes it and continues as if nothing happened.
+// State is NOT persisted here — the content script owns
+// playback state and the LookupTable. When the SW is killed
+// (~30s idle), the CS resends [text, startIndex] to resume.
 //
-// Additional roles:
-// - Relay: Popup control messages → Content Script
-// - Context menu: "Read from here" → Content Script
-// - Install/Startup: initialize default settings + context menu
-//
-// See DECISIONS.md § "Stateless Service Worker"
+// See: DECISIONS.md § "Stateless Service Worker"
 
-import { ttsManager } from "@background/ttsManager";
-import type {
-  ToContentScriptMessage,
-  FromContentScriptMessage,
-  TtsSpeakRequest,
-  ResumePayload,
-  TtsSettings,
-} from "@shared/types";
+import { initDnrRules } from "@background/dnrRules";
+import type { FileUrlDetectedMessage } from "@shared/types";
 
-// ---- Default Settings (mirrors V1) ----
+// ---- Constants ----
 
-const DEFAULT_SETTINGS: TtsSettings = {
-  uiLang: "en",
-  provider: "webspeech",
-  rate: 1,
-  lang: "en-US",
-  voice: "",
-  azureKey: "",
-  azureRegion: "southeastasia",
-  azureVoice: "en-US-JennyNeural",
-  googleKey: "",
-  googleVoice: "en-US-Neural2-F",
-  edgeVoice: "en-US-JennyNeural",
-};
-
-// ---- Helpers ----
-
-/** Get the currently active tab (or null if unavailable) */
-async function getActiveTab(): Promise<chrome.tabs.Tab | null> {
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true,
-  });
-  return tab ?? null;
-}
-
-/**
- * Forward a message to the content script of a tab.
- * Returns the response from the content script, or null on failure.
- */
-async function forwardToTab(
-  tabId: number,
-  message: ToContentScriptMessage
-): Promise<unknown> {
-  try {
-    return await chrome.tabs.sendMessage(tabId, message);
-  } catch {
-    // Tab may not have content script injected (e.g., chrome:// pages)
-    return null;
-  }
-}
-
-// ---- TTS Speech Handler (CS → SW → chrome.tts) ----
-
-/** Build chrome.tts.SpeakOptions from our TtsSettings */
-function buildTtsOptions(settings: TtsSettings): chrome.tts.SpeakOptions {
-  return {
-    lang: settings.lang || undefined,
-    rate: settings.rate || 1,
-    voiceName: settings.voice || undefined,
-    // Request word boundaries for precise highlight tracking
-    desiredEventTypes: ["start", "end", "word", "sentence", "error"],
-  };
-}
-
-async function handleTtsSpeak(
-  msg: TtsSpeakRequest,
-  senderTabId: number
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const options = buildTtsOptions(msg.settings);
-    await ttsManager.speak(msg.text, options, senderTabId);
-    return { ok: true };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "tts speak failed",
-    };
-  }
-}
-
-function handleTtsStop(): { ok: boolean } {
-  ttsManager.stop();
-  return { ok: true };
-}
-
-function handleResumePayload(_msg: ResumePayload): { ok: boolean } {
-  // SW is stateless — nothing to restore.
-  // Content script will re-send TTS_SPEAK when ready.
-  // We just acknowledge so CS knows we're alive.
-  return { ok: true };
-}
+const CONTEXT_MENU_ID = "brave-tts-read-from-here";
 
 // ---- Context Menu ----
 
 function ensureContextMenu(): void {
-  chrome.storage.sync.get(["uiLang"], ({ uiLang }) => {
-    const lang = uiLang || "en";
-    const title =
-      lang === "vi" ? "Đọc từ đây" : "Read from here";
-
-    chrome.contextMenus.removeAll(() => {
-      chrome.contextMenus.create({
-        id: "brave-tts-read-from-here",
-        title,
-        contexts: ["page", "selection"],
-      });
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: CONTEXT_MENU_ID,
+      title: "Đọc từ đây",
+      contexts: ["page", "selection"],
+      documentUrlPatterns: ["<all_urls>"],
     });
   });
 }
 
-// ---- Message Router ----
+// ---- Message Routing ----
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const msg = message as
-    | ToContentScriptMessage
-    | FromContentScriptMessage;
+function handleMessage(
+  msg: unknown,
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response: unknown) => void
+): boolean {
+  if (!msg || typeof msg !== "object" || !("type" in msg)) {
+    return false;
+  }
 
-  // --- Messages FROM Content Script (CS → SW) ---
+  const message = msg as { type: string };
+  const tabId = _sender.tab?.id;
 
-  if (msg.type === "TTS_SPEAK") {
-    const tabId = sender.tab?.id;
-    if (!tabId) {
-      sendResponse({ ok: false, error: "no tab id" });
+  switch (message.type) {
+    // --- Messages FROM Popup → Forward to Content Script ---
+    case "START_READING":
+    case "READ_FROM_HERE":
+    case "STOP_READING":
+    case "PAUSE_READING":
+    case "RESUME_READING":
+    case "SET_RATE":
+    case "GET_VOICES":
+    case "GET_STATUS": {
+      if (tabId == null) {
+        sendResponse({ error: "No active tab" });
+        return false;
+      }
+      chrome.tabs.sendMessage(tabId, msg).then(sendResponse).catch(() => {
+        sendResponse({ error: "Content script not ready" });
+      });
+      return true; // async response
+    }
+
+    // --- Messages FROM Content Script ---
+    // v2-02: Handle TTS_SPEAK, TTS_STOP, RESUME_PAYLOAD here
+
+    // --- v2-03: FILE_URL_DETECTED ---
+    case "FILE_URL_DETECTED": {
+      const fileMsg = message as FileUrlDetectedMessage;
+      // Acknowledge; popup can query this state for onboarding UI
+      console.debug(
+        "[Brave Read Aloud] file:// URL detected:",
+        fileMsg.url
+      );
+      sendResponse({ ok: true });
       return false;
     }
-    handleTtsSpeak(msg as TtsSpeakRequest, tabId).then(sendResponse);
-    return true; // async response
+
+    default:
+      return false;
   }
-
-  if (msg.type === "TTS_STOP") {
-    sendResponse(handleTtsStop());
-    return false;
-  }
-
-  if (msg.type === "RESUME_PAYLOAD") {
-    sendResponse(handleResumePayload(msg as ResumePayload));
-    return false;
-  }
-
-  // --- Messages FROM Popup (relay to Content Script) ---
-
-  // These messages go to the content script. The popup sends them
-  // via chrome.runtime.sendMessage, and we forward to the active tab.
-  if (
-    msg.type === "START_READING" ||
-    msg.type === "STOP_READING" ||
-    msg.type === "PAUSE_READING" ||
-    msg.type === "RESUME_READING" ||
-    msg.type === "SET_RATE" ||
-    msg.type === "GET_VOICES" ||
-    msg.type === "GET_STATUS"
-  ) {
-    // If sender is from a tab, it's a content script (shouldn't happen for these)
-    // If sender has no tab, it's from popup
-    if (!sender.tab) {
-      getActiveTab().then((tab) => {
-        if (tab?.id) {
-          forwardToTab(tab.id, msg as ToContentScriptMessage).then(
-            (response) => sendResponse(response ?? { ok: false })
-          );
-        } else {
-          sendResponse({ ok: false, error: "no active tab" });
-        }
-      });
-      return true; // async
-    }
-  }
-
-  return false;
-});
+}
 
 // ---- Context Menu Click ----
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId !== "brave-tts-read-from-here" || !tab?.id) return;
-  const message: ToContentScriptMessage = {
-    type: "READ_FROM_HERE",
-    useSelection: Boolean(info.selectionText),
-  };
-  forwardToTab(tab.id, message);
+  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  if (!tab?.id) return;
+
+  // Detect context: if selectionText is present, read the selection;
+  // otherwise start reading from the pointer position (page context).
+  const useSelection = typeof info.selectionText === "string";
+  const message = useSelection
+    ? { type: "READ_FROM_HERE" as const, useSelection: true }
+    : { type: "READ_FROM_HERE" as const, useSelection: false };
+
+  chrome.tabs.sendMessage(tab.id, message).catch(() => {
+    // Content script may not be injected yet (e.g., chrome:// pages)
+  });
 });
 
-// ---- Install / Startup ----
+// ---- Install & Startup ----
 
-chrome.runtime.onInstalled.addListener(({ reason }) => {
-  if (reason === "install") {
-    chrome.storage.sync.set(DEFAULT_SETTINGS);
-  } else if (reason === "update") {
-    // Merge new defaults with existing settings
-    chrome.storage.sync.get(Object.keys(DEFAULT_SETTINGS), (existing) => {
-      const merged = { ...DEFAULT_SETTINGS };
-      for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof TtsSettings)[]) {
-        if (existing[key] !== undefined && existing[key] !== "") {
-          (merged as Record<string, unknown>)[key] = existing[key];
-        }
-      }
-      chrome.storage.sync.set(merged);
-    });
-  }
+chrome.runtime.onInstalled.addListener(() => {
   ensureContextMenu();
+  initDnrRules(); // fire-and-forget — DNR rules are non-critical
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureContextMenu();
+  initDnrRules(); // re-register (may have been cleared on browser restart)
 });
 
-// Update context menu title when language changes
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync" && changes.uiLang) {
-    ensureContextMenu();
-  }
-});
+// ---- Message Listener ----
+
+chrome.runtime.onMessage.addListener(handleMessage);
