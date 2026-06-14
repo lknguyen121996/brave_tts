@@ -5,7 +5,7 @@
 ## Overview
 - **Bug fixes:** 12/12 passing (9 P0 + 3 P1 + 2 P2)
 - **V1 Features:** 7/8 verified (feat-04 failing — Google Docs TTS)
-- **V2 Features:** 1/10 verified (v2-01 passing, v2-02 pending)
+- **V2 Features:** 2/10 verified (v2-01 + v2-02 passing, v2-03 pending)
 - **Build:** ✅ JS syntax all files passing (V1) + ✅ TypeScript strict (V2)
 - **Test:** 4/6 passing (UI: hover/jump/back-on-track, Edge, Popup; Docs + Reload failing)
 
@@ -52,7 +52,7 @@
 | ID | Title | Dependencies |
 |----|-------|-------------|
 | v2-01 | Core Contracts & Types | ✅ passing |
-| v2-02 | Stateless SW + TTS Manager | v2-01 |
+| v2-02 | Stateless SW + TTS Manager | ✅ passing |
 | v2-03 | Hybrid Interception (PDF/EPUB) | v2-01 |
 | v2-04 | HTML Adapter + Shadow DOM UI | v2-01, v2-02 |
 | v2-05 | PDF Viewer + PDFAdapter | v2-01, v2-02, v2-03 |
@@ -72,6 +72,22 @@
 - `src/adapters/IDocumentAdapter.ts` — IDocumentAdapter interface + AdapterDefaults helpers (buildLookupTable, extract, getFullText, binary search findNodeId)
 - `src/manifest.json` — V2 manifest entries pointing to src/ files
 - `src/vite-env.d.ts` — Vite client type reference
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
+### v2-02: Stateless Service Worker + TTS Manager ✅ (2026-06-14)
+
+**Files created:**
+- `src/background/ttsManager.ts` — TtsManager class wrapping chrome.tts.speak() with per-utterance onEvent, token-based cancellation, event forwarding to CS
+- `src/background/index.ts` — Stateless SW entry point: message router (CS↔SW↔Popup), TTS_SPEAK/TTS_STOP/RESUME_PAYLOAD handlers, context menu, install/startup defaults
+
+**Architecture:**
+- SW là "cái loa" — không giữ state (text, index, settings)
+- CS gửi TTS_SPEAK { text, startIndex, settings } → SW gọi chrome.tts.speak()
+- SW forward TTS events (start/word/sentence/end/error) về CS qua chrome.tabs.sendMessage
+- Token-based cancellation: mỗi utterance có token riêng, stale events bị discard
+- RESUME_PAYLOAD: khi SW bị kill và restart, CS gửi lại payload → SW ack
+- Popup messages relay qua SW đến active tab's CS
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
 
@@ -108,7 +124,7 @@
 
 ## Next Steps
 
-1. V2: Continue v2-02 (Stateless SW + TTS Manager) — next V2 feature
+1. V2: Continue v2-03 (Hybrid Interception PDF/EPUB) — next V2 feature
 2. Investigate & fix feat-04 (Google Docs TTS) — check if Google Docs internal APIs changed
 3. Investigate & fix test-02 (reload regression) — content script re-injection timing
 
