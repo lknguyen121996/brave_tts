@@ -7,8 +7,16 @@ test/screenshot*.png
 node_modules/
 package-lock.json
 
+# V2 build output
+dist/
+
 # Test browser profiles (cache, state, cookies)
 test/.e2e-profile-*/
 
 .env
 .env.*
+
+# Project management (internal, not shipped)
+DECISIONS.md
+PROGRESS.md
+feature_list.json
