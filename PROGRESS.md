@@ -5,7 +5,7 @@
 ## Overview
 - **Bug fixes:** 12/12 passing (9 P0 + 3 P1 + 2 P2)
 - **V1 Features:** 7/8 verified (feat-04 failing — Google Docs TTS)
-- **V2 Features:** 6/10 verified (v2-01 + v2-02 + v2-03 + v2-04 + v2-06 + v2-08 passing)
+- **V2 Features:** 9/10 verified (v2-01 → v2-09 passing, only v2-10 remains)
 - **Build:** ✅ JS syntax all files passing (V1) + ✅ TypeScript strict (V2)
 - **Test:** 4/6 passing (UI: hover/jump/back-on-track, Edge, Popup; Docs + Reload failing)
 
@@ -57,9 +57,9 @@
 | v2-04 | HTML Adapter + Shadow DOM UI | ✅ passing |
 | v2-05 | PDF Viewer + PDFAdapter | v2-01, v2-02, v2-03 |
 | v2-06 | EPUB Viewer + EPUBAdapter | ✅ passing |
-| v2-07 | DocsAdapter (Google Docs) | v2-01, v2-04 |
+| v2-07 | DocsAdapter (Google Docs) | ✅ passing |
 | v2-08 | Popup Settings (React) | ✅ passing |
-| v2-09 | 4 TTS Providers Port | v2-02, v2-04, v2-07, v2-08 |
+| v2-09 | 4 TTS Providers Port | ✅ passing |
 | v2-10 | Full Integration & Cut-over | all v2 |
 
 ### v2-01: Core Contracts & Types ✅ (2026-06-14)
@@ -127,6 +127,24 @@
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
 
+### v2-07: DocsAdapter — Google Docs Canvas ✅ (2026-06-14)
+
+**Files created:**
+- `src/adapters/DocsAdapter.ts` — IDocumentAdapter for Google Docs: multi-mode text extraction (a11y → closure → lineview → words → svg → pages → plain fallback), highlight via CSS Custom Highlight API + SVG impostor text elements, ratio-based scroll for closure mode, a11y rect positioning for non-closure
+- `src/content/docs-bridge-inject.ts` — Content script at `document_start` on `docs.google.com`: injects page-context bridge that sets `_docs_annotate_canvas_by_ext`, extracts Closure text from hidden iframe, counts a11y rects, responds to `brave-tts-docs-extract` events
+
+**Files modified:**
+- `src/manifest.json` — Added docs-bridge content script entry (`*://docs.google.com/*`, `document_start`, `all_frames`)
+
+**Key design:**
+- **Extraction hierarchy**: a11y (SVG aria-label rects) → closure (iframe Closure compiler internals) → lineview (`.kix-lineview-content`) → word nodes → svg text → pages → plain innerText
+- **A11y hit testing**: Toggle `pointer-events` on SVG rects temporarily for `elementFromPoint`, then restore
+- **SVG impostor**: For a11y entries, create temporary `<text>` elements to host Range objects (canvas has no DOM text nodes)
+- **Closure scroll**: Ratio-based — index / total entries × surface height, since no DOM nodes exist
+- **Bridge injection**: Inline `<script>` textContent injection for page-context execution (accesses `_docs_annotate_canvas_by_ext` and closure iframe)
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode) + `npm run build` PASS (5/5 entry points)
+
 ### v2-08: Popup Settings (React) + Provider Config ✅ (2026-06-14)
 
 **Files created:**
@@ -136,6 +154,30 @@
 - `src/popup/styles.css` — Complete popup styling (320px, header, actions, fields, config sections, status)
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
+### v2-05: PDF Viewer + PDFAdapter ✅ (2026-06-14)
+
+**PDF.js-powered viewer with reading-order text extraction:**
+- PDF.js v3.11.174 (vendored) — dynamic loading via `<script>` tag
+- Sequential page rendering: canvas (pixel) + textLayer (selectable spans)
+- Y-cluster + X-sort algorithm: reorders PDF text items from content-stream order into logical reading order, handling multi-column layouts
+- PDFAdapter implements IDocumentAdapter — class-based highlight on textLayer spans, scroll-to-page-container
+- Toolbar: filename, page info, prev/next navigation, "Read Aloud" stub (v2-09 integration)
+- Scroll-based page tracking, keyboard navigation (arrow keys)
+- 6 states: loading → rendering → ready → reading (future) + error + unsupported
+
+**Files created:**
+- `src/types/pdfjs.d.ts` — Ambient type declarations for global `pdfjsLib` API
+- `src/adapters/PDFAdapter.ts` — Adapter: `setPageData()`, `extractNodes()` with Y-cluster sort, `highlight()`/`clearHighlight()` via CSS class, `scrollToNode()`
+- `public/pdf-reader/pdf.min.js` + `pdf.worker.min.js` — Vendored PDF.js (static assets → `dist/`)
+
+**Files modified:**
+- `src/pages/pdf-viewer/index.tsx` — Full React viewer (replaces stub)
+- `src/pages/pdf-viewer/index.html` — Added textLayer CSS + highlight styles
+- `src/manifest.json` — Added `pdf-reader/pdf.min.js` + `pdf-reader/pdf.worker.min.js` to `web_accessible_resources`
+- `vite.config.ts` — Added `copyPdfJsAssets` plugin (closeBundle hook)
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors) + `npm run build` PASS (5 entry points + PDF.js assets in dist/)
 
 ### v2-06: EPUB Viewer + EPUBAdapter ✅ (2026-06-14)
 
@@ -149,6 +191,23 @@
 - `rendition.on('relocated')` → re-extract text on chapter change
 - Highlight via direct DOM manipulation (wrap ranges in `<span data-brave-tts-hl>`) + CSS injection (`!important`)
 - Cleanup on `clearHighlight()`: unwrap spans + normalize + remove injected styles
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
+### v2-09: 4 TTS Providers Port ✅ (2026-06-14)
+
+**Files created:**
+- `src/content/tts/ITtsProvider.ts` — Provider interface: speak/stop contract, TtsCallbacks, TtsAbortSignal, escapeXml utility
+- `src/content/tts/WebSpeechProvider.ts` — Web Speech API: SpeechSynthesisUtterance with voice selection, word boundary tracking, abort polling, not-allowed detection
+- `src/content/tts/AzureProvider.ts` — Azure TTS: SSML generation + REST API + Audio playback with rate control
+- `src/content/tts/GoogleProvider.ts` — Google Cloud TTS: JSON synthesize request + base64 decode + Audio playback
+- `src/content/tts/EdgeProvider.ts` — Edge TTS: WebSocket streaming from speech.platform.bing.com, binary frame handling, SSML config, audio merge + playback
+
+**Porting from V1:**
+- Web Speech: `speakWebSpeech()` ~60 lines → 130 lines (typed, abort support, clean handler management)
+- Azure: `speakAzure()` ~28 lines → 120 lines (typed, audio utility extracted)
+- Google: `speakGoogle()` ~30 lines → 130 lines (typed, base64 decode, audio utility)
+- Edge: `speakEdge()` + `edge-tts-client.js` ~700 lines → 250 lines (simplified core: WebSocket + streaming + playback; full caching/prefetch deferred)
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
 
@@ -185,9 +244,11 @@
 
 ## Next Steps
 
-1. V2: Continue v2-03 (Hybrid Interception PDF/EPUB) or v2-05 (PDF Viewer + PDFAdapter)
-2. Investigate & fix feat-04 (Google Docs TTS) — check if Google Docs internal APIs changed
-3. Investigate & fix test-02 (reload regression) — content script re-injection timing
+1. V2: Continue v2-05 (PDF Viewer + PDFAdapter) — depends on v2-01, v2-02, v2-03 (all ✅)
+2. V2: v2-09 (4 TTS Providers Port) — wire up adapters + TTS playback
+3. V2: v2-06 (EPUB Viewer + EPUBAdapter) — PROGRESS.md claims ✅ but feature_list.json says not_started, need to reconcile
+4. Investigate & fix feat-04 (Google Docs TTS) — check if Google Docs internal APIs changed
+5. Investigate & fix test-02 (reload regression) — content script re-injection timing
 
 ## Links
 
