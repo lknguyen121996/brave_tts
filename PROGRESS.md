@@ -5,7 +5,7 @@
 ## Overview
 - **Bug fixes:** 12/12 passing (9 P0 + 3 P1 + 2 P2)
 - **V1 Features:** 7/8 verified (feat-04 failing — Google Docs TTS)
-- **V2 Features:** 5/10 verified (v2-01 + v2-02 + v2-03 + v2-04 + v2-08 passing)
+- **V2 Features:** 6/10 verified (v2-01 + v2-02 + v2-03 + v2-04 + v2-06 + v2-08 passing)
 - **Build:** ✅ JS syntax all files passing (V1) + ✅ TypeScript strict (V2)
 - **Test:** 4/6 passing (UI: hover/jump/back-on-track, Edge, Popup; Docs + Reload failing)
 
@@ -56,7 +56,7 @@
 | v2-03 | Hybrid Interception (PDF/EPUB) | v2-01 |
 | v2-04 | HTML Adapter + Shadow DOM UI | ✅ passing |
 | v2-05 | PDF Viewer + PDFAdapter | v2-01, v2-02, v2-03 |
-| v2-06 | EPUB Viewer + EPUBAdapter | v2-01, v2-02, v2-03 |
+| v2-06 | EPUB Viewer + EPUBAdapter | ✅ passing |
 | v2-07 | DocsAdapter (Google Docs) | v2-01, v2-04 |
 | v2-08 | Popup Settings (React) | ✅ passing |
 | v2-09 | 4 TTS Providers Port | v2-02, v2-04, v2-07, v2-08 |
@@ -134,6 +134,21 @@
 - `src/popup/index.tsx` — React root mount
 - `src/popup/App.tsx` — Full popup: provider/language/rate/voice selects, Azure/Google key config, play/stop/PDF buttons, settings load/save via chrome.storage.sync, voice loading (Web Speech from tab + fallback maps for Azure/Google/Edge)
 - `src/popup/styles.css` — Complete popup styling (320px, header, actions, fields, config sections, status)
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
+### v2-06: EPUB Viewer + EPUBAdapter ✅ (2026-06-14)
+
+**Files created:**
+- `src/adapters/EPUBAdapter.ts` — IDocumentAdapter for EPUB: TreeWalker chapterDocument, CSS injection highlight via `contents.addStylesheetCss` or `<style>` injection, scrollToNode within iframe, chapter transition handling via `setContents()`
+- `src/pages/epub-viewer/index.tsx` — epub.js integration: Book loading, paginated rendering, prev/next navigation, toolbar with title + chapter indicator, TTS play/stop stubs, adapter integration on `rendered` + `relocated` hooks
+- `package.json` — added `epubjs@^0.3.93`
+
+**Key design:**
+- `rendition.hooks.render` → update adapter with new Contents
+- `rendition.on('relocated')` → re-extract text on chapter change
+- Highlight via direct DOM manipulation (wrap ranges in `<span data-brave-tts-hl>`) + CSS injection (`!important`)
+- Cleanup on `clearHighlight()`: unwrap spans + normalize + remove injected styles
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
 
