@@ -221,5 +221,30 @@
     "state": "passing",
     "depends_on": [],
     "priority": "P0"
+  },
+  {
+    "id": "test-01",
+    "title": "Popup settings E2E test",
+    "description": "Test popup load, language toggle, provider switch, speed slider, settings persistence, Edge voice list, play validation.",
+    "verification": "cd test && npm run test:popup",
+    "state": "passing",
+    "depends_on": [
+      "bug-06",
+      "fix-02"
+    ],
+    "priority": "P1"
+  },
+  {
+    "id": "test-02",
+    "title": "Extension reload recovery E2E test",
+    "description": "Test reading survives extension reload, content script re-injects, hover works after reload, listener leak check.",
+    "verification": "cd test && npm run test:reload",
+    "state": "passing",
+    "depends_on": [
+      "bug-02",
+      "bug-05",
+      "bug-09"
+    ],
+    "priority": "P1"
   }
 ]
