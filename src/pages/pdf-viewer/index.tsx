@@ -1,27 +1,27 @@
 // ============================================================
-// PDF Viewer Page — Brave Read Aloud V2
+// PDF Viewer Page — Brave Read Aloud V2 (Pro Overlay)
 // ============================================================
 //
 // Receives the PDF URL via hash (`#url=...`) or query param
-// (`?url=...`). Loads PDF.js dynamically, renders each page
-// as canvas + textLayer, and integrates with PDFAdapter for
-// text extraction and highlight.
+// (`?url=...`). Loads PDF.js dynamically, parses pages in
+// batches via requestIdleCallback, renders each page as
+// canvas + overlay, and integrates with PDFAdapter for
+// word-level text extraction and hybrid highlight.
+//
+// Virtualisation: react-virtuoso for paginated rendering
+// (3 pages in DOM at any time). Container uses
+// transform: scale() to lock viewport dimensions.
 //
 // 5 states: loading → rendering → ready → reading (TTS active)
-//                     → error (no URL, load failed, etc.)
-//                     → unsupported (not a PDF URL)
+//                     → error / unsupported
 //
-// See DECISIONS.md § "PDF text sort mượn từ PDF.js source"
+// See DECISIONS.md § "PDF Pro Overlay"
 
-import React, {
-  useEffect,
-  useState,
-  useRef,
-  useCallback,
-} from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import { extractOriginalUrl, detectDocumentType } from "@shared/interception";
 import { PDFAdapter } from "@adapters/PDFAdapter";
+import { Virtuoso } from "react-virtuoso";
 
 // ---- Types ----
 
@@ -38,94 +38,43 @@ interface PageInfo {
   total: number;
 }
 
-// ---- Styles ----
-
-const styles: Record<string, React.CSSProperties> = {
-  toolbar: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 100,
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "8px 16px",
-    background: "#1a1a2e",
-    color: "#fff",
-    fontSize: 13,
-    fontFamily: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
-  },
-  toolbarTitle: {
-    flex: 1,
-    fontWeight: 600,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap" as const,
-  },
-  toolbarBtn: {
-    padding: "6px 12px",
-    border: "1px solid rgba(255,255,255,0.2)",
-    borderRadius: 6,
-    background: "rgba(255,255,255,0.1)",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 13,
-    fontWeight: 500,
-  },
-  toolbarBtnPrimary: {
-    padding: "6px 14px",
-    border: "none",
-    borderRadius: 6,
-    background: "#4361ee",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  viewerContainer: {
-    marginTop: 44,
-    flex: 1,
-    overflowY: "auto" as const,
-    padding: "16px 0",
-  },
-  center: {
-    marginTop: 80,
-    flex: 1,
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 40,
-    textAlign: "center" as const,
-    color: "#ccc",
-    fontFamily: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
-  },
-  pageInfo: {
-    fontSize: 12,
-    opacity: 0.8,
-    minWidth: 80,
-    textAlign: "right" as const,
-  },
-  progressBar: {
-    width: 200,
-    height: 6,
-    background: "rgba(255,255,255,0.1)",
-    borderRadius: 3,
-    overflow: "hidden",
-    marginTop: 12,
-  },
-  progressFill: {
-    height: "100%",
-    background: "#4361ee",
-    borderRadius: 3,
-    transition: "width 0.2s",
-  },
-};
-
 // ---- Constants ----
 
 const SCALE = 1.5;
+const BATCH_SIZE = 5; // Parse 5 pages per batch
+
+// ---- Styles ----
+
+const S: Record<string, React.CSSProperties> = {
+  toolbar: {
+    position: "fixed", top: 0, left: 0, right: 0, zIndex: 100,
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "8px 16px", background: "#1a1a2e", color: "#fff",
+    fontSize: 13,
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif",
+  },
+  toolbarTitle: {
+    flex: 1, fontWeight: 600, overflow: "hidden",
+    textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+  btn: {
+    padding: "6px 12px", border: "1px solid rgba(255,255,255,0.2)",
+    borderRadius: 6, background: "rgba(255,255,255,0.1)",
+    color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 500,
+  },
+  btnPrimary: {
+    padding: "6px 14px", border: "none", borderRadius: 6,
+    background: "#4361ee", color: "#fff", cursor: "pointer",
+    fontSize: 13, fontWeight: 600,
+  },
+  pageInfo: { fontSize: 12, opacity: 0.8, minWidth: 80, textAlign: "right" },
+  center: {
+    marginTop: 80, flex: 1, display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center", padding: 40,
+    textAlign: "center", color: "#ccc",
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif",
+  },
+};
 
 // ---- Component ----
 
@@ -134,60 +83,46 @@ function PdfViewerApp(): React.ReactElement {
   const [documentUrl, setDocumentUrl] = useState("");
   const [filename, setFilename] = useState("PDF Viewer");
   const [pageInfo, setPageInfo] = useState<PageInfo>({ current: 0, total: 0 });
-  const [renderProgress, setRenderProgress] = useState(0); // 0-100
+  const [renderProgress, setRenderProgress] = useState(0);
   const [totalSegments, setTotalSegments] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Scale factor for transform: scale() responsive container
+  const [scaleFactor, setScaleFactor] = useState(1);
+
   const viewerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<PDFAdapter>(new PDFAdapter());
+  const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
+  const pdfViewports = useRef<Map<number, pdfjsLib.PageViewport>>(new Map());
+  const pageContainers = useRef<Map<number, HTMLDivElement>>(new Map());
+  const renderedPages = useRef<Set<number>>(new Set());
 
-  // ---- Init: load PDF.js and render ----
+  // ---- Init ----
 
   useEffect(() => {
     const url = extractOriginalUrl();
-
-    if (!url) {
-      setState("error");
-      setErrorMessage(
-        "No document URL provided. Use #url=<pdf_url> in the address."
-      );
-      return;
-    }
-
-    const docType = detectDocumentType(url);
-    if (docType !== "pdf") {
-      setState("unsupported");
-      return;
-    }
+    if (!url) { setState("error"); setErrorMessage("No document URL provided."); return; }
+    if (detectDocumentType(url) !== "pdf") { setState("unsupported"); return; }
 
     setDocumentUrl(url);
-
-    // Extract filename from URL
     try {
-      const pathname = new URL(url).pathname;
-      const name = pathname.split("/").pop() || "document.pdf";
+      const name = new URL(url).pathname.split("/").pop() || "document.pdf";
       setFilename(decodeURIComponent(name));
-    } catch {
-      setFilename("document.pdf");
-    }
+    } catch { setFilename("document.pdf"); }
 
     loadPdfJs()
-      .then(() => renderAllPages(url))
+      .then(() => initPdf(url))
       .catch((err) => {
         console.error("[Brave Read Aloud] PDF init error:", err);
         setState("error");
-        setErrorMessage(
-          err instanceof Error ? err.message : "Failed to load PDF viewer"
-        );
+        setErrorMessage(err instanceof Error ? err.message : "Failed to load PDF");
       });
 
-    return () => {
-      adapterRef.current.clearPages();
-    };
+    return () => { adapterRef.current.reset(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- Dynamic PDF.js loading ----
+  // ---- PDF.js dynamic loader ----
 
   function loadPdfJs(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -198,300 +133,262 @@ function PdfViewerApp(): React.ReactElement {
           chrome.runtime.getURL("pdf-reader/pdf.worker.min.js");
         resolve();
       };
-      script.onerror = () =>
-        reject(new Error("Failed to load PDF.js library"));
+      script.onerror = () => reject(new Error("Failed to load PDF.js"));
       document.head.appendChild(script);
     });
   }
 
-  // ---- Render all pages sequentially ----
+  // ---- Init PDF: load document, pre-parse all text content ----
 
-  async function renderAllPages(url: string): Promise<void> {
+  async function initPdf(url: string): Promise<void> {
     setState("rendering");
 
     const loadingTask = pdfjsLib.getDocument({ url });
     const pdfDoc = await loadingTask.promise;
+    pdfDocRef.current = pdfDoc;
 
     const totalPages = pdfDoc.numPages;
-    if (totalPages === 0) {
-      setState("error");
-      setErrorMessage("PDF has no pages");
-      return;
-    }
+    if (totalPages === 0) { setState("error"); setErrorMessage("PDF has no pages"); return; }
 
     setPageInfo({ current: 0, total: totalPages });
+    adapterRef.current.reset();
 
-    // Clear previous render
-    adapterRef.current.clearPages();
-    if (viewerRef.current) viewerRef.current.innerHTML = "";
+    // Calculate scale factor based on container width
+    updateScaleFactor();
 
-    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-      try {
-        await renderPage(pdfDoc, pageNum);
-        setRenderProgress(Math.round((pageNum / totalPages) * 100));
-        setPageInfo({ current: pageNum, total: totalPages });
-      } catch (err) {
-        console.error(
-          `[Brave Read Aloud] Error rendering page ${pageNum}:`,
-          err
-        );
-        // Continue with remaining pages
-      }
-    }
-
-    // Extract text from all rendered pages
-    try {
-      const nodes = adapterRef.current.extractNodes();
-      setTotalSegments(nodes.length);
-      console.debug(
-        `[Brave Read Aloud] PDF extracted: ${nodes.length} segments across ${totalPages} pages`
-      );
-    } catch (err) {
-      console.error("[Brave Read Aloud] PDF extraction error:", err);
-    }
+    // Parse pages in batches using requestIdleCallback
+    await batchedParse(pdfDoc, totalPages);
 
     setState("ready");
   }
 
-  async function renderPage(
-    pdfDoc: pdfjsLib.PDFDocumentProxy,
-    pageNum: number
-  ): Promise<void> {
-    const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: SCALE });
+  // ---- Batched parsing with requestIdleCallback ----
 
-    // Create page container
-    const container = document.createElement("div");
-    container.className = "page-container";
+  async function batchedParse(pdfDoc: pdfjsLib.PDFDocumentProxy, totalPages: number): Promise<void> {
+    let parsedCount = 0;
+
+    for (let batchStart = 1; batchStart <= totalPages; batchStart += BATCH_SIZE) {
+      // Wait for browser idle time before each batch
+      await new Promise<void>((resolve) => {
+        if (typeof requestIdleCallback !== "undefined") {
+          requestIdleCallback(() => resolve(), { timeout: 100 });
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
+
+      const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalPages);
+
+      for (let pageNum = batchStart; pageNum <= batchEnd; pageNum++) {
+        try {
+          const page = await pdfDoc.getPage(pageNum);
+          const viewport = page.getViewport({ scale: SCALE });
+          pdfViewports.current.set(pageNum, viewport);
+
+          const textContent = await page.getTextContent();
+          adapterRef.current.addPageTextContent(
+            pageNum,
+            textContent.items as unknown as pdfjsLib.TextItem[],
+            viewport
+          );
+
+          parsedCount++;
+          setPageInfo({ current: parsedCount, total: totalPages });
+          setRenderProgress(Math.round((parsedCount / totalPages) * 100));
+        } catch (err) {
+          console.error(`[Brave Read Aloud] Parse error page ${pageNum}:`, err);
+        }
+      }
+    }
+  }
+
+  // ---- Scale factor for responsive container ----
+
+  function updateScaleFactor(): void {
+    if (!viewerRef.current) return;
+    const containerWidth = viewerRef.current.clientWidth;
+    // Use a default viewport width or the first page's viewport
+    const viewportWidth = (SCALE * 595) || containerWidth; // 595 = A4 width in pt
+    const factor = Math.min(1, containerWidth / viewportWidth);
+    setScaleFactor(factor);
+  }
+
+  useEffect(() => {
+    const onResize = (): void => updateScaleFactor();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // ---- Render a page (canvas + overlay hydration) ----
+
+  const renderPage = useCallback(async (
+    pageNum: number,
+    container: HTMLDivElement
+  ): Promise<void> => {
+    const pdfDoc = pdfDocRef.current;
+    const viewport = pdfViewports.current.get(pageNum);
+    if (!pdfDoc || !viewport) return;
+
+    // Clear previous render
+    container.innerHTML = "";
+
+    // Set container dimensions to viewport (locked by transform: scale())
+    container.style.position = "relative";
     container.style.width = `${viewport.width}px`;
     container.style.height = `${viewport.height}px`;
+    container.style.transform = `scale(${scaleFactor})`;
+    container.style.transformOrigin = "top left";
+    container.className = "page-container";
 
-    // Canvas for pixel rendering
+    // Canvas (z-index: 0)
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
     canvas.height = viewport.height;
+    canvas.style.cssText = "display: block;";
     container.appendChild(canvas);
 
-    // Text layer for text selection and TTS
-    const textLayer = document.createElement("div");
-    textLayer.className = "textLayer";
-    textLayer.style.width = `${viewport.width}px`;
-    textLayer.style.height = `${viewport.height}px`;
-    container.appendChild(textLayer);
-
-    // Append to viewer
-    viewerRef.current?.appendChild(container);
-
     // Render canvas
+    const page = await pdfDoc.getPage(pageNum);
     const ctx = canvas.getContext("2d");
     if (ctx) {
       await page.render({ canvasContext: ctx, viewport }).promise;
     }
 
-    // Render text layer
-    const textContent = await page.getTextContent();
-    const textDivs: HTMLSpanElement[] = [];
+    // Hydrate overlay + textLayer via adapter
+    adapterRef.current.hydratePage(pageNum, container);
 
-    const textLayerTask = pdfjsLib.renderTextLayer({
-      textContentSource: textContent,
-      container: textLayer,
-      viewport,
-      textDivs,
-    });
-    await textLayerTask.promise;
+    pageContainers.current.set(pageNum, container);
+    renderedPages.current.add(pageNum);
+  }, [scaleFactor]);
 
-    // Convert generic HTMLElement[] to HTMLSpanElement[]
-    const spans = textDivs.filter(
-      (el): el is HTMLSpanElement => el instanceof HTMLSpanElement
-    );
+  // ---- Virtuoso item renderer ----
 
-    // Feed to adapter
-    adapterRef.current.setPageData(spans, viewport.width, viewport.height);
+  interface VirtuosoContext {
+    pageNums: number[];
   }
 
-  // ---- Navigation ----
+  const virtuosoItemContent = useCallback(
+    (_index: number, pageNum: number) => {
+      const containerRef = (el: HTMLDivElement | null) => {
+        if (el && !renderedPages.current.has(pageNum)) {
+          renderPage(pageNum, el);
+        }
+      };
+
+      return (
+        <div
+          ref={containerRef}
+          className="page-container"
+          style={{
+            margin: "8px auto",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+            background: "#fff",
+          }}
+        />
+      );
+    },
+    [renderPage]
+  );
+
+  // Generate page number array for virtuoso
+  const pageNums = Array.from(
+    { length: pageInfo.total },
+    (_, i) => i + 1
+  );
+
+  // ---- TTS Controls (stub — wired in v2-09 integration) ----
+
+  const handlePlay = useCallback(() => {
+    if (typeof window === "undefined") return;
+    setState("reading");
+    // Extract text via adapter
+    const nodes = adapterRef.current.extractNodes();
+    setTotalSegments(nodes.length);
+    console.debug("[Brave Read Aloud] PDF TTS start:", nodes.length, "words");
+    // v2-09: PlaybackController.start(adapter, provider, settings)
+  }, []);
+
+  const handleStop = useCallback(() => {
+    setState("ready");
+    adapterRef.current.clearHighlight();
+  }, []);
 
   const handlePrev = useCallback(() => {
-    if (!viewerRef.current) return;
-    const containers = viewerRef.current.querySelectorAll(".page-container");
-    const mid = viewerRef.current.scrollTop;
-    for (let i = containers.length - 1; i >= 0; i--) {
-      const c = containers[i] as HTMLElement;
-      if (c.offsetTop < mid - 10) {
-        c.scrollIntoView({ behavior: "smooth", block: "start" });
-        return;
-      }
-    }
-    // Fallback: scroll to top
-    containers[0]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (typeof window !== "undefined") window.scrollBy({ top: -400, behavior: "smooth" });
   }, []);
 
   const handleNext = useCallback(() => {
-    if (!viewerRef.current) return;
-    const containers = viewerRef.current.querySelectorAll(".page-container");
-    const mid = viewerRef.current.scrollTop;
-    for (let i = 0; i < containers.length; i++) {
-      const c = containers[i] as HTMLElement;
-      if (c.offsetTop + c.offsetHeight > mid + 10) {
-        c.scrollIntoView({ behavior: "smooth", block: "start" });
-        return;
-      }
-    }
+    if (typeof window !== "undefined") window.scrollBy({ top: 400, behavior: "smooth" });
   }, []);
-
-  // ---- TTS placeholder (v2-09 integration point) ----
-
-  const handleReadFromHere = useCallback(() => {
-    // v2-09: send START_READING with adapter data to content script → SW
-    const output = adapterRef.current.extract();
-    console.debug("[Brave Read Aloud] PDF ready for TTS:", {
-      segments: output.nodes.length,
-      fullTextLength: output.fullText.length,
-    });
-  }, []);
-
-  // ---- Scroll-based page tracking ----
-
-  useEffect(() => {
-    if (state !== "ready" && state !== "reading") return;
-
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    // Capture in a non-nullable local for closure safety
-    const viewEl: HTMLDivElement = viewer;
-
-    let ticking = false;
-    function onScroll(): void {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        const containers = viewEl.querySelectorAll(".page-container");
-        const mid = viewEl.scrollTop + viewEl.clientHeight / 2;
-        for (let i = 0; i < containers.length; i++) {
-          const c = containers[i] as HTMLElement;
-          if (
-            c.offsetTop <= mid &&
-            c.offsetTop + c.offsetHeight >= mid
-          ) {
-            setPageInfo((prev) => ({ ...prev, current: i + 1 }));
-            break;
-          }
-        }
-        ticking = false;
-      });
-    }
-
-    viewEl.addEventListener("scroll", onScroll, { passive: true });
-    return () => viewEl.removeEventListener("scroll", onScroll);
-  }, [state]);
-
-  // ---- Keyboard navigation ----
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent): void {
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") handlePrev();
-      else if (e.key === "ArrowRight" || e.key === "ArrowDown") handleNext();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handlePrev, handleNext]);
 
   // ---- Render ----
 
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       {/* Toolbar */}
-      <div style={styles.toolbar}>
-        <span style={styles.toolbarTitle}>{filename}</span>
-        {state === "rendering" && (
-          <span style={{ fontSize: 12, opacity: 0.7 }}>
-            Rendering page {pageInfo.current}/{pageInfo.total}…
-          </span>
-        )}
+      <div style={S.toolbar}>
+        <span style={S.toolbarTitle}>{filename}</span>
+
         {(state === "ready" || state === "reading") && (
           <>
-            <button
-              style={styles.toolbarBtn}
-              onClick={handlePrev}
-              title="Previous page"
-            >
-              ◀
-            </button>
-            <span style={styles.pageInfo}>
-              {pageInfo.current} / {pageInfo.total}
+            <button style={S.btn} onClick={handlePrev}>◀</button>
+            <span style={S.pageInfo}>
+              {pageInfo.current}/{pageInfo.total}
             </span>
-            <button
-              style={styles.toolbarBtn}
-              onClick={handleNext}
-              title="Next page"
-            >
-              ▶
-            </button>
-            <button
-              style={styles.toolbarBtnPrimary}
-              onClick={handleReadFromHere}
-              title="Read from beginning"
-            >
-              ▶ Read Aloud
-            </button>
+            <button style={S.btn} onClick={handleNext}>▶</button>
           </>
+        )}
+
+        {state === "ready" && (
+          <button style={S.btnPrimary} onClick={handlePlay}>▶ Đọc</button>
+        )}
+        {state === "reading" && (
+          <button style={{ ...S.btnPrimary, background: "#d93025" }} onClick={handleStop}>
+            ■ Dừng
+          </button>
         )}
       </div>
 
-      {/* Viewer container */}
-      <div ref={viewerRef} style={styles.viewerContainer} />
+      {/* Viewer */}
+      {state === "rendering" && (
+        <div style={S.center}>
+          <div style={{ fontSize: 18, marginBottom: 8 }}>
+            Parsing PDF ({renderProgress}%)
+          </div>
+          <div style={{ width: 200, height: 6, background: "rgba(255,255,255,0.1)", borderRadius: 3, overflow: "hidden", marginTop: 12 }}>
+            <div style={{ height: "100%", width: `${renderProgress}%`, background: "#4361ee", borderRadius: 3, transition: "width 0.2s" }} />
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.5, marginTop: 8 }}>
+            {totalSegments > 0 ? `${totalSegments} words extracted` : ""}
+          </div>
+        </div>
+      )}
 
-      {/* Overlay states */}
-      {state !== "ready" && state !== "reading" && (
-        <div style={styles.center}>
-          {state === "loading" && (
-            <>
-              <div style={{ fontSize: 18, marginBottom: 8 }}>
-                Loading PDF…
-              </div>
-              <div style={{ fontSize: 13, opacity: 0.6 }}>
-                Fetching document
-              </div>
-            </>
-          )}
+      {state === "ready" || state === "reading" ? (
+        <div ref={viewerRef} style={{ flex: 1, marginTop: 44, overflowY: "auto", background: "#525659", padding: "16px 0" }}>
+          <Virtuoso
+            style={{ height: "calc(100vh - 44px)" }}
+            totalCount={pageInfo.total}
+            itemContent={(_index: number) => {
+              const pageNum = _index + 1;
+              return virtuosoItemContent(_index, pageNum);
+            }}
+            increaseViewportBy={{ top: 800, bottom: 800 }}
+          />
+        </div>
+      ) : null}
 
-          {state === "rendering" && (
-            <>
-              <div style={{ fontSize: 18, marginBottom: 8 }}>
-                Rendering pages…
-              </div>
-              <div style={styles.progressBar}>
-                <div
-                  style={{ ...styles.progressFill, width: `${renderProgress}%` }}
-                />
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.5, marginTop: 8 }}>
-                {renderProgress}%
-              </div>
-            </>
-          )}
+      {state === "error" && (
+        <div style={S.center}>
+          <div style={{ fontSize: 18, color: "#ff6b6b", marginBottom: 8 }}>Could not load PDF</div>
+          <div style={{ fontSize: 13, opacity: 0.6 }}>{errorMessage}</div>
+        </div>
+      )}
 
-          {state === "error" && (
-            <>
-              <div style={{ fontSize: 18, color: "#ff6b6b", marginBottom: 8 }}>
-                Could not load PDF
-              </div>
-              <div style={{ fontSize: 13, opacity: 0.6, maxWidth: 500 }}>
-                {errorMessage}
-              </div>
-            </>
-          )}
-
-          {state === "unsupported" && (
-            <>
-              <div style={{ fontSize: 18, color: "#ffd43b", marginBottom: 8 }}>
-                Unsupported Document Type
-              </div>
-              <div style={{ fontSize: 13, opacity: 0.6 }}>
-                The provided URL does not point to a PDF document.
-              </div>
-            </>
-          )}
+      {state === "unsupported" && (
+        <div style={S.center}>
+          <div style={{ fontSize: 18, color: "#ffd43b", marginBottom: 8 }}>Unsupported Document Type</div>
+          <div style={{ fontSize: 13, opacity: 0.6 }}>The URL does not point to a PDF document.</div>
         </div>
       )}
     </div>
@@ -504,5 +401,5 @@ const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(<PdfViewerApp />);
 } else {
-  console.error("[Brave Read Aloud] PDF viewer: #root element not found");
+  console.error("[Brave Read Aloud] PDF viewer: #root not found");
 }
