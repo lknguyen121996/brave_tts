@@ -28,6 +28,9 @@ async function renderPage(num) {
   canvas.width = vp.width; canvas.height = vp.height;
   const ctx = canvas.getContext("2d");
 
+  // PDF.js v3 requires --scale-factor CSS variable on textLayer parent
+  container.style.setProperty("--scale-factor", String(SCALE));
+
   const textLayer = document.createElement("div");
   textLayer.className = "textLayer";
   textLayer.style.width = `${vp.width}px`;
