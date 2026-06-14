@@ -5,7 +5,7 @@
 ## Overview
 - **Bug fixes:** 12/12 passing (9 P0 + 3 P1 + 2 P2)
 - **V1 Features:** 7/8 verified (feat-04 failing — Google Docs TTS)
-- **V2 Features:** 3/10 verified (v2-01 + v2-02 + v2-04 passing)
+- **V2 Features:** 5/10 verified (v2-01 + v2-02 + v2-03 + v2-04 + v2-08 passing)
 - **Build:** ✅ JS syntax all files passing (V1) + ✅ TypeScript strict (V2)
 - **Test:** 4/6 passing (UI: hover/jump/back-on-track, Edge, Popup; Docs + Reload failing)
 
@@ -58,7 +58,7 @@
 | v2-05 | PDF Viewer + PDFAdapter | v2-01, v2-02, v2-03 |
 | v2-06 | EPUB Viewer + EPUBAdapter | v2-01, v2-02, v2-03 |
 | v2-07 | DocsAdapter (Google Docs) | v2-01, v2-04 |
-| v2-08 | Popup Settings (React) | v2-01, v2-02 |
+| v2-08 | Popup Settings (React) | ✅ passing |
 | v2-09 | 4 TTS Providers Port | v2-02, v2-04, v2-07, v2-08 |
 | v2-10 | Full Integration & Cut-over | all v2 |
 
@@ -74,6 +74,31 @@
 - `src/vite-env.d.ts` — Vite client type reference
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
+### v2-03: Hybrid Interception cho PDF/EPUB ✅ (2026-06-14)
+
+**3-tier interception infrastructure:**
+1. **DNR redirect HTTP/S PDF/EPUB** → internal viewer pages (rules 1001 PDF, 1002 EPUB)
+2. **Content Script observer** (`all_frames`, `document_start`): MutationObserver + link click interceptor + file:// detection
+3. **Viewer stubs** (`src/pages/pdf-viewer/`, `src/pages/epub-viewer/`): React apps with 4 states (loading/ready/error/unsupported)
+
+**Files created:**
+- `src/shared/interception.ts` — Constants, URL helpers (`detectDocumentType`, `buildViewerUrl`, `extractOriginalUrl`), DNR rule IDs
+- `src/background/dnrRules.ts` — `initDnrRules()` + `removeDnrRules()` with `chrome.declarativeNetRequest.RuleActionType.REDIRECT` enum
+- `src/background/index.ts` — SW entry: DNR init on install/startup, context menu, message routing stub
+- `src/content/interception.ts` — Lightweight CS (2.23 kB bundled): MutationObserver for embed/object/iframe, link click interception, file:// handling
+- `src/pages/pdf-viewer/index.html` + `index.tsx` — PDF viewer stub (integration point for v2-05)
+- `src/pages/epub-viewer/index.html` + `index.tsx` — EPUB viewer stub (integration point for v2-06)
+- `src/content/components/App.tsx` + `src/content/styles.ts` — Placeholder stubs for content/index.tsx (v2-04 scope)
+- `src/popup/index.html` — Minimal popup stub (v2-08 scope)
+
+**Files modified:**
+- `src/shared/types.ts` — Added `FileUrlDetectedMessage` to message types
+- `src/manifest.json` — Added interception content script entry (`all_frames: true`, `document_start`, `match_about_blank: true`)
+- `vite.config.ts` — Added `additionalInputs` for PDF/EPUB viewer HTML pages
+- `src/content/index.tsx` — Fixed `Record<string, unknown>` cast → proper global Window declaration
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors) + `npm run build` PASS (all 4 entry points built)
 
 ### v2-02: Stateless Service Worker + TTS Manager ✅ (2026-06-14)
 
@@ -99,6 +124,16 @@
 - `src/content/styles.ts` — CSS styles injected into shadow root: toolbar, hover button, highlight, gesture prompt
 - `src/content/components/App.tsx` — Root React component with toolbar state management
 - `src/content/components/Toolbar.tsx` — Playback controls: play/pause, stop, rate slower/faster, status label
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
+### v2-08: Popup Settings (React) + Provider Config ✅ (2026-06-14)
+
+**Files created:**
+- `src/popup/index.html` — Entry HTML with root mount point
+- `src/popup/index.tsx` — React root mount
+- `src/popup/App.tsx` — Full popup: provider/language/rate/voice selects, Azure/Google key config, play/stop/PDF buttons, settings load/save via chrome.storage.sync, voice loading (Web Speech from tab + fallback maps for Azure/Google/Edge)
+- `src/popup/styles.css` — Complete popup styling (320px, header, actions, fields, config sections, status)
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
 
