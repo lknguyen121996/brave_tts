@@ -103,7 +103,7 @@
 
   const MIN_RATE = 0.5;
   const MAX_RATE = 3;
-  const HOVER_PLAY_DELAY_MS = 500;
+  const HOVER_PLAY_DELAY_MS = 1000;
   const EDGE_PREFETCH_AHEAD = 5;
   const EDGE_AUDIO_CACHE_MAX = 24;
   const EDGE_HOVER_PREFETCH_AHEAD = 2;

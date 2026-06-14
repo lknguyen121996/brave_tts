@@ -49,7 +49,7 @@ function startServer() {
     const box = await p3.boundingBox();
     if (!box) fail("Paragraph box not found");
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(1400);
     await page.waitForSelector(".brave-tts-hover-play", { timeout: 10000 });
     await page.click(".brave-tts-hover-play");
     await page.waitForSelector(".brave-tts-toolbar", { timeout: 8000 });
@@ -95,7 +95,7 @@ function startServer() {
     if (!box2) fail("Paragraph box not found after reload");
 
     await page2.mouse.move(box2.x + box2.width / 2, box2.y + box2.height / 2);
-    await page2.waitForTimeout(900);
+    await page2.waitForTimeout(1400);
     await page2.waitForSelector(".brave-tts-hover-play", { timeout: 10000 });
     await page2.click(".brave-tts-hover-play");
     await page2.waitForSelector(".brave-tts-toolbar", { timeout: 8000 });
