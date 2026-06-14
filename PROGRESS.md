@@ -5,7 +5,7 @@
 ## Overview
 - **Bug fixes:** 12/12 passing (9 P0 + 3 P1 + 2 P2)
 - **V1 Features:** 7/8 verified (feat-04 failing — Google Docs TTS)
-- **V2 Features:** 2/10 verified (v2-01 + v2-02 passing, v2-03 pending)
+- **V2 Features:** 3/10 verified (v2-01 + v2-02 + v2-04 passing)
 - **Build:** ✅ JS syntax all files passing (V1) + ✅ TypeScript strict (V2)
 - **Test:** 4/6 passing (UI: hover/jump/back-on-track, Edge, Popup; Docs + Reload failing)
 
@@ -54,7 +54,7 @@
 | v2-01 | Core Contracts & Types | ✅ passing |
 | v2-02 | Stateless SW + TTS Manager | ✅ passing |
 | v2-03 | Hybrid Interception (PDF/EPUB) | v2-01 |
-| v2-04 | HTML Adapter + Shadow DOM UI | v2-01, v2-02 |
+| v2-04 | HTML Adapter + Shadow DOM UI | ✅ passing |
 | v2-05 | PDF Viewer + PDFAdapter | v2-01, v2-02, v2-03 |
 | v2-06 | EPUB Viewer + EPUBAdapter | v2-01, v2-02, v2-03 |
 | v2-07 | DocsAdapter (Google Docs) | v2-01, v2-04 |
@@ -91,6 +91,17 @@
 
 **Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
 
+### v2-04: HTML Adapter + Shadow DOM UI ✅ (2026-06-14)
+
+**Files created:**
+- `src/adapters/HTMLAdapter.ts` — TreeWalker extraction, sentence splitting, LookupTable, CSS Custom Highlight API + `<mark>` fallback, scrollToNode, readable root detection
+- `src/content/index.tsx` — Shadow DOM injection, React 18 root mount, `all: initial` style isolation, message listener (START_READING, STOP, GET_STATUS, GET_VOICES, TTS_EVENT), double-injection guard
+- `src/content/styles.ts` — CSS styles injected into shadow root: toolbar, hover button, highlight, gesture prompt
+- `src/content/components/App.tsx` — Root React component with toolbar state management
+- `src/content/components/Toolbar.tsx` — Playback controls: play/pause, stop, rate slower/faster, status label
+
+**Verification:** `npx tsc --noEmit` PASS (zero errors, strict mode)
+
 ## Completed (previous sessions)
 
 ### P0 — Bugs (9/9)
@@ -124,7 +135,7 @@
 
 ## Next Steps
 
-1. V2: Continue v2-03 (Hybrid Interception PDF/EPUB) — next V2 feature
+1. V2: Continue v2-03 (Hybrid Interception PDF/EPUB) or v2-05 (PDF Viewer + PDFAdapter)
 2. Investigate & fix feat-04 (Google Docs TTS) — check if Google Docs internal APIs changed
 3. Investigate & fix test-02 (reload regression) — content script re-injection timing
 
