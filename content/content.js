@@ -19,7 +19,6 @@
     hoverTarget: null,
     hoverTimer: null,
     hoverPlayBtn: null,
-    hoverPointer: null,
     autoFollow: true,
     backOnTrackEl: null,
     gesturePromptEl: null,
@@ -68,7 +67,7 @@
     if (STATE.toolbar) {
       const bar = STATE.toolbar;
       const statusEl = bar.querySelector(".status");
-      const currentStatus = statusEl?.textContent || "";
+      const currentStatus = statusEl?.dataset.status || "";
       const rateLabel = bar.querySelector(".rate-label");
       const slowerBtn = bar.querySelector('[data-action="slower"]');
       const fasterBtn = bar.querySelector('[data-action="faster"]');
@@ -81,15 +80,12 @@
       if (fasterBtn) fasterBtn.title = t("content.toolbarFaster");
       if (stopBtn) stopBtn.textContent = t("content.toolbarStop");
       updatePauseButton();
-      if (currentStatus === braveTtsT("content.statusReading", "vi") ||
-          currentStatus === braveTtsT("content.statusReading", "en")) {
-        setStatus(t("content.statusReading"));
-      } else if (currentStatus === braveTtsT("content.statusPaused", "vi") ||
-                 currentStatus === braveTtsT("content.statusPaused", "en")) {
-        setStatus(t("content.statusPaused"));
-      } else if (currentStatus === braveTtsT("content.toolbarReady", "vi") ||
-                 currentStatus === braveTtsT("content.toolbarReady", "en")) {
-        setStatus(t("content.toolbarReady"));
+      if (currentStatus === "reading") {
+        setStatus(t("content.statusReading"), "reading");
+      } else if (currentStatus === "paused") {
+        setStatus(t("content.statusPaused"), "paused");
+      } else if (currentStatus === "ready") {
+        setStatus(t("content.toolbarReady"), "ready");
       }
     }
 
@@ -370,7 +366,7 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       hideHoverPlayButton();
-      startReadingFromTarget(target, STATE.hoverPointer);
+      startReadingFromTarget(target, null);
     }, true);
 
     btn.addEventListener("pointerdown", (e) => e.stopPropagation(), true);
@@ -401,10 +397,24 @@
     requestReading(startInfo, null, target);
   }
 
+  // Debounce: mousemove + pointermove fire together per physical move.
+  // Batch to one process per animation frame using the latest event.
+  let _hoverThrottle = null;
+  let _latestHoverEvent = null;
+
   function onHoverPointerMove(e) {
     if (e.target?.closest?.(".brave-tts-hover-play")) return;
-    STATE.hoverPointer = { x: e.clientX, y: e.clientY };
+    _latestHoverEvent = e;
+    if (_hoverThrottle) return;
+    _hoverThrottle = requestAnimationFrame(() => {
+      _hoverThrottle = null;
+      const ev = _latestHoverEvent;
+      _latestHoverEvent = null;
+      if (ev) processHoverPointerMove(ev);
+    });
+  }
 
+  function processHoverPointerMove(e) {
     const target = getHoverReadingTarget(e.clientX, e.clientY);
     if (!target) {
       if (STATE.hoverTimer || STATE.hoverPlayBtn) return;
@@ -551,13 +561,15 @@
         return;
       }
 
+      let voiceTimer;
       const done = () => {
+        clearTimeout(voiceTimer);
         window.speechSynthesis.onvoiceschanged = null;
         resolve(window.speechSynthesis.getVoices());
       };
 
       window.speechSynthesis.onvoiceschanged = done;
-      setTimeout(done, 800);
+      voiceTimer = setTimeout(done, 800);
     });
   }
 
@@ -755,7 +767,7 @@
       ensureToolbar();
       updatePauseButton();
       if (resolvedSettings?.provider === "edge") {
-        setStatus(t("content.statusPreparing"));
+        setStatus(t("content.statusPreparing"), "preparing");
         warmEdgeBuffer(
           resolvedStart.index,
           resolvedSettings,
@@ -764,12 +776,12 @@
         ).catch((err) => {
           console.warn("[Brave TTS] Edge buffer warm failed:", err?.message || err);
         });
-        setStatus(t("content.statusReading"));
+        setStatus(t("content.statusReading"), "reading");
         readFromIndex(resolvedStart.index, resolvedStart.textOverride, requestId);
         return;
       }
 
-      setStatus(t("content.statusReading"));
+      setStatus(t("content.statusReading"), "reading");
       readFromIndex(resolvedStart.index, resolvedStart.textOverride, requestId);
     };
 
@@ -918,6 +930,18 @@
     STATE.scrollListenerAttached = true;
   }
 
+  function detachScrollTracking() {
+    if (!STATE.scrollListenerAttached) return;
+    const opts = { passive: true, capture: true };
+    window.removeEventListener("scroll", onUserScroll, opts);
+    document.removeEventListener("scroll", onUserScroll, opts);
+    window.removeEventListener("wheel", onUserWheel, opts);
+    document.removeEventListener("wheel", onUserWheel, opts);
+    window.removeEventListener("touchmove", onUserWheel, opts);
+    document.removeEventListener("touchmove", onUserWheel, opts);
+    STATE.scrollListenerAttached = false;
+  }
+
   function resetFollowMode() {
     STATE.autoFollow = true;
     STATE.currentReadRange = null;
@@ -996,6 +1020,8 @@
 
     const baseRange = getSegmentTextRange(segment, spokenText);
     if (!baseRange) return;
+    // Word-level progress highlight only valid within a single text node
+    if (baseRange.startContainer !== baseRange.endContainer) return;
 
     const start = baseRange.startOffset;
     const end = Math.min(baseRange.startOffset + Math.max(1, charEnd), baseRange.endOffset);
@@ -1019,7 +1045,7 @@
     const bar = document.createElement("div");
     bar.className = "brave-tts-toolbar";
     bar.innerHTML = `
-      <span class="status">${t("content.toolbarReady")}</span>
+      <span class="status" data-status="ready">${t("content.toolbarReady")}</span>
       <div class="brave-tts-rate">
         <label class="rate-label" title="${t("content.toolbarRate")}">${t("content.toolbarRate")}</label>
         <button type="button" data-action="slower" title="${t("content.toolbarSlower")}">−</button>
@@ -1081,9 +1107,11 @@
     }
   }
 
-  function setStatus(text) {
+  function setStatus(text, statusKey) {
     const bar = ensureToolbar();
-    bar.querySelector(".status").textContent = text;
+    const statusEl = bar.querySelector(".status");
+    statusEl.textContent = text;
+    if (statusKey) statusEl.dataset.status = statusKey;
   }
 
   function updatePauseButton() {
@@ -1097,9 +1125,9 @@
     updatePauseButton();
     if (STATE.paused) {
       cancelCurrentSpeech();
-      setStatus(t("content.statusPaused"));
+      setStatus(t("content.statusPaused"), "paused");
     } else {
-      setStatus(t("content.statusReading"));
+      setStatus(t("content.statusReading"), "reading");
       readFromIndex(STATE.currentIndex, null, STATE.playRequestId);
     }
   }
@@ -1109,6 +1137,7 @@
     STATE.running = false;
     STATE.paused = false;
     resetFollowMode();
+    detachScrollTracking();
     abortReadingSession();
     clearHighlights();
     hideHoverPlayButton();
@@ -1117,6 +1146,8 @@
     STATE.backOnTrackEl = null;
     STATE.toolbar?.remove();
     STATE.toolbar = null;
+    const edgeFrame = document.getElementById("brave-tts-edge-synth");
+    if (edgeFrame) edgeFrame.remove();
   }
 
   async function speakWebSpeech(text, rate, voiceName, lang, segment) {
@@ -1443,7 +1474,7 @@
 
     const needsFetch = !(cached instanceof Uint8Array && cached.length);
     if (needsFetch && STATE.running) {
-      setStatus(t("content.statusPreparing"));
+      setStatus(t("content.statusPreparing"), "preparing");
     }
 
     prefetchEdgeAhead(STATE.currentIndex, settings);
@@ -1457,7 +1488,7 @@
         throw new Error("aborted");
       }
       if (STATE.running && !STATE.paused) {
-        setStatus(t("content.statusReading"));
+        setStatus(t("content.statusReading"), "reading");
       }
       try {
         await playAudio(preloadedUrl, rate, token, segment, text, settings);
@@ -1470,17 +1501,13 @@
 
     let bytes = cached instanceof Uint8Array && cached.length ? cached : null;
     if (!bytes) {
-      try {
-        bytes = await getEdgeAudioBytes(text, settings, { priority: true });
-        if (!bytes?.length) throw new Error("Edge TTS: no audio");
-      } catch {
-        bytes = await fetchEdgeAudioBytes(text, settings, { priority: true });
-      }
+      bytes = await getEdgeAudioBytes(text, settings, { priority: true });
+      if (!bytes?.length) throw new Error("Edge TTS: no audio");
     }
 
     if (token !== STATE.speakToken) throw new Error("aborted");
     if (STATE.running && !STATE.paused) {
-      setStatus(t("content.statusReading"));
+      setStatus(t("content.statusReading"), "reading");
     }
 
     const blob = new Blob([bytes], { type: "audio/mp3" });
@@ -1515,6 +1542,7 @@
         audio.onended = null;
         audio.onerror = null;
         audio.onplaying = null;
+        audio.ontimeupdate = null;
         abortSignal?.removeEventListener("abort", onAbort);
       };
 
@@ -1635,12 +1663,13 @@
       }
 
       try {
-        while (isActivePlayRequest(requestId) && !STATE.paused) {
+        for (let retry = 0; retry < 2; retry++) {
+          if (!isActivePlayRequest(requestId) || STATE.paused) break;
           try {
             await speakSegment(spokenText, segment);
             break;
           } catch (err) {
-            if (!isRetriableSpeechError(err) || !isActivePlayRequest(requestId) || STATE.paused) throw err;
+            if (retry >= 1 || !isRetriableSpeechError(err) || !isActivePlayRequest(requestId) || STATE.paused) throw err;
           }
         }
       } catch (err) {
@@ -1673,7 +1702,7 @@
     }
 
     if (isActivePlayRequest(requestId) && generation === STATE.readGeneration) {
-      setStatus(t("content.statusComplete"));
+      setStatus(t("content.statusComplete"), "complete");
       setTimeout(() => {
         if (requestId === STATE.playRequestId) stopReading();
       }, 2000);
@@ -1795,6 +1824,8 @@
     isSkippableTarget,
     setStatus,
     scrollRangeIntoView,
+    // Shared constants
+    SPLIT_TEXT_REGEX: /[^.!?。！？]+[.!?。！？]?/g,
   };
 
   window.__braveTtsRegisterDocs = function (impl) {

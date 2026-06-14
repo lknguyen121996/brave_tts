@@ -29,7 +29,7 @@ let cachedTabId = null;
 let cachedTabUrl = null;
 
 function getUiLang() {
-  return braveTtsNormalizeUiLang($("uiLang")?.value || "vi");
+  return braveTtsNormalizeUiLang($("uiLang")?.value || "en");
 }
 
 function t(key, params) {
@@ -37,7 +37,7 @@ function t(key, params) {
 }
 
 function applyPopupI18n(uiLang = getUiLang()) {
-  document.documentElement.lang = uiLang === "en" ? "en" : "vi";
+  document.documentElement.lang = uiLang === "vi" ? "vi" : "en";
   braveTtsApplyDom(document, uiLang);
 }
 
@@ -48,7 +48,7 @@ function readSettingsFromForm() {
     if (el) settings[key] = el.type === "range" ? Number(el.value) : el.value;
   }
   if (!settings.provider) settings.provider = "webspeech";
-  if (!settings.uiLang) settings.uiLang = "vi";
+  if (!settings.uiLang) settings.uiLang = "en";
   return settings;
 }
 
@@ -64,7 +64,7 @@ async function loadSettings() {
       el.value = data[key] ?? el.value ?? "";
     }
   }
-  applyPopupI18n(braveTtsNormalizeUiLang(data.uiLang || "vi"));
+  applyPopupI18n(braveTtsNormalizeUiLang(data.uiLang || "en"));
   toggleProviderSections(data.provider || "webspeech");
 }
 
@@ -112,6 +112,7 @@ function voicesForLang(voices, lang) {
 }
 
 function populateSelect(select, options, savedValue, emptyLabel) {
+  select.disabled = false;
   const previous = savedValue ?? select.value;
   select.innerHTML = "";
 
@@ -133,6 +134,11 @@ function populateSelect(select, options, savedValue, emptyLabel) {
   if (previous && [...select.options].some((opt) => opt.value === previous)) {
     select.value = previous;
   }
+}
+
+function setSelectLoading(select, message) {
+  select.disabled = true;
+  select.innerHTML = `<option disabled>\${message}</option>`;
 }
 
 function populateVoiceSelect(voices, preferredLang) {
@@ -288,7 +294,7 @@ async function loadAzureVoices(key, region, lang) {
     return;
   }
 
-  populateSelect(select, [], "", t("voice.loadingAzure"));
+  setSelectLoading(select, t("voice.loadingAzure"));
 
   try {
     const res = await fetch(
@@ -336,7 +342,7 @@ async function loadGoogleVoices(key, lang) {
     return;
   }
 
-  populateSelect(select, [], "", t("voice.loadingGoogle"));
+  setSelectLoading(select, t("voice.loadingGoogle"));
 
   try {
     const res = await fetch(
@@ -577,6 +583,7 @@ $("btnPlay").addEventListener("click", () => {
           .catch((err) => {
             $("status").textContent = t("status.connectFailed");
             console.error("[Brave TTS popup]", err);
+            // Keep popup open so user can see the error
           })
       );
   });

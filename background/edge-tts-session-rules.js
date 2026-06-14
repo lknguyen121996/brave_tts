@@ -10,7 +10,17 @@ function ensureEdgeTtsWsHeaders() {
   if (!chrome.declarativeNetRequest?.updateDynamicRules) return Promise.resolve();
 
   if (!edgeMuid) {
-    edgeMuid = crypto.randomUUID().replace(/-/g, "").toUpperCase();
+    let uuid;
+    if (typeof crypto.randomUUID === "function") {
+      uuid = crypto.randomUUID();
+    } else {
+      // Fallback for older service worker contexts
+      uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (crypto.getRandomValues(new Uint8Array(1))[0] & 15);
+        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+      });
+    }
+    edgeMuid = uuid.replace(/-/g, "").toUpperCase();
   }
 
   const origin = `chrome-extension://${chrome.runtime.id}`;

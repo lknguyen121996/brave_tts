@@ -2,6 +2,7 @@ const path = require("path");
 const { launchWithExtension, pass, fail } = require("./lib/helpers");
 
 const DOCS_URL =
+  process.env.BRAVE_TTS_DOCS_URL ||
   "https://docs.google.com/document/d/1rdEQ6b9kb3t-WIG4_lC7dDQdPP-h1r7wLgOCoHquR7E/edit?usp=sharing";
 const PROFILE = path.join(__dirname, ".e2e-profile-docs");
 const SCREENSHOT = path.join(__dirname, "docs-test-screenshot.png");

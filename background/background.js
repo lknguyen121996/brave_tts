@@ -1,17 +1,17 @@
 importScripts("../shared/i18n.js", "edge-tts-session-rules.js");
 
 const DEFAULT_SETTINGS = {
-  uiLang: "vi",
+  uiLang: "en",
   provider: "webspeech",
   rate: 1,
-  lang: "vi-VN",
+  lang: "en-US",
   voice: "",
   azureKey: "",
   azureRegion: "southeastasia",
-  azureVoice: "vi-VN-HoaiMyNeural",
+  azureVoice: "en-US-JennyNeural",
   googleKey: "",
-  googleVoice: "vi-VN-Neural2-A",
-  edgeVoice: "vi-VN-HoaiMyNeural",
+  googleVoice: "en-US-Neural2-F",
+  edgeVoice: "en-US-JennyNeural",
 };
 
 function ensureContextMenu() {

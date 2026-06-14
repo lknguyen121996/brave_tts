@@ -1,11 +1,14 @@
 .DS_Store
 _metadata/
-test/node_modules/
+test/node_modules/*
 test/.*/
 test/docs-test-screenshot.png
 test/screenshot*.png
 node_modules/
 package-lock.json
+
+# Test browser profiles (cache, state, cookies)
+test/.e2e-profile-*/
 
 .env
 .env.*

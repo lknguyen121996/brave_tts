@@ -1,88 +1,88 @@
 # Brave Read Aloud
 
-Extension Chrome/Brave đọc văn bản trang web — highlight theo câu/từ, tự cuộn, hỗ trợ Google Docs (canvas).
+> **Language:** English | [Tiếng Việt](README.vi.md)
 
-## Tính năng
+A Chrome/Brave extension that reads web pages aloud with sentence/word highlighting and auto-scroll — free TTS via Web Speech, Edge TTS, Azure, or Google Cloud.
 
-- **TTS:** Web Speech API (mặc định, miễn phí), **Edge TTS**, Azure Speech, Google Cloud TTS
-- **Đọc từ vị trí:** hover **500ms** trên dòng/đoạn → nút ▶; đang đọc thì hiện ↪ để nhảy
-- **Highlight & auto-scroll** theo tiến độ đọc
-- **Toolbar** trên trang: pause, dừng, chỉnh tốc độ, “Back on track” khi tự cuộn bị lệch
-- **Google Docs:** annotated canvas + SVG accessibility; double-click hoặc hover để bắt đầu
-- **Context menu:** “Đọc từ đây” (chuột phải)
-- **Popup:** “Đọc trang” (Brave cần bấm thêm nút xác nhận trên trang — gesture policy)
+## Features
 
-## Cài đặt (dev)
+- **TTS Providers:** Web Speech API (free, no key), Edge TTS (free), Azure Speech, Google Cloud TTS
+- **Hover to play:** Hover **500ms** over any paragraph → ▶ button; while reading → ↪ to jump
+- **Highlight & auto-scroll** following reading progress
+- **Toolbar:** Pause, stop, speed control (0.5x–3x), "Back on track" when scroll drifts
+- **Google Docs:** Annotated canvas + SVG accessibility; double-click or hover to start
+- **Context menu:** Right-click → "Read from here"
+- **Popup:** Configure provider, voice, speed; "Read page" with Brave gesture workaround
 
-1. Mở `chrome://extensions` hoặc `brave://extensions`
-2. Bật **Developer mode**
-3. **Load unpacked** → chọn thư mục `brave-tts`
-4. Sau mỗi lần sửa code → **Reload** extension
+## Install (dev)
 
-## Cách dùng
+1. Open `chrome://extensions` or `brave://extensions`
+2. Enable **Developer mode**
+3. **Load unpacked** → select the `brave-tts` folder
+4. After editing code → **Reload** extension
 
-| Trang | Cách bắt đầu |
-|-------|----------------|
-| Web thường | Hover nửa giây trên đoạn → ▶ |
-| Google Docs | Hover nửa giây hoặc **double-click** trên dòng |
-| Popup | ▶ Đọc trang → bấm **Bắt đầu đọc** trên trang |
-| Đang đọc | Hover chỗ khác → ↪ |
+## Usage
+
+| Page | How to start |
+|------|--------------|
+| Regular web | Hover half a second over a paragraph → ▶ |
+| Google Docs | Hover half a second or **double-click** a line |
+| Popup | ▶ Read page → click **Start reading** on the page |
+| While reading | Hover elsewhere → ↪ |
 
 ### Google Docs
 
-1. **Reload tab Docs** sau khi reload extension (bootstrap chạy lúc trang load)
-2. Nếu chưa đọc được: **Công cụ → Cài đặt trợ năng → Turn on screen reader support** (macOS: `Control + Option + T`)
-3. Cuộn qua phần cần đọc nếu doc dài (lazy render)
+1. **Reload** the Docs tab after reloading the extension
+2. If reading doesn't start: **Tools → Accessibility settings → Turn on screen reader support** (`Control + Option + T` on macOS)
+3. Scroll through the doc if it's long (lazy rendering)
 
-## Cấu hình TTS (popup)
+## TTS Configuration (popup)
 
-| Provider | Ghi chú |
-|----------|---------|
-| **Web Speech** | Không cần API key; giọng phụ thuộc OS/trình duyệt |
-| **Edge TTS** | Miễn phí, giọng Microsoft Read Aloud (mặc định) |
-| **Azure** | Key + region + voice (free tier có hạn) |
+| Provider | Notes |
+|----------|-------|
+| **Web Speech** | No API key; voice depends on OS/browser |
+| **Edge TTS** | Free, Microsoft Read Aloud voices (default) |
+| **Azure** | Key + region + voice (free tier has limits) |
 | **Google Cloud** | API key + voice |
 
-Cài đặt lưu qua `chrome.storage.sync`.
+Settings persist via `chrome.storage.sync`.
 
-## Cấu trúc project
+## Project Structure
 
 ```
 brave-tts/
-├── manifest.json
-├── background/background.js      # Context menu, message routing
+├── manifest.json                # Extension manifest V3
+├── background/background.js      # Service worker: context menu, message routing
 ├── content/
-│   ├── content.js                # Logic TTS, highlight, hover (chung)
-│   ├── docs-content.js           # Hook Google Docs (chỉ load trên docs.google.com)
-│   ├── content.css
-│   ├── docs-bootstrap.js         # Inject sớm trên docs.google.com
-│   └── docs-page.js              # Closure/SVG extract (page context)
-├── popup/                        # UI cài đặt & điều khiển
-├── shared/                       # edge-tts-client.js, i18n.js
+│   ├── content.js                # Main TTS logic, highlight, hover
+│   ├── docs-content.js           # Google Docs hook (canvas + SVG)
+│   ├── docs-bootstrap.js         # Early inject for docs.google.com
+│   ├── docs-page.js              # Page-context Closure/SVG extraction
+│   └── content.css               # Toolbar & highlight styles
+├── popup/                        # Settings UI & playback controls
+├── shared/                       # Edge TTS client, i18n
 ├── icons/
-└── test/                         # E2E Playwright (xem test/README.md)
+└── test/                         # Playwright E2E tests
 ```
 
-## Phát triển & test
+## Development & Testing
 
 ```bash
 cd test
 npm install
-npm test              # Trang HTML local (hover, jump, back-on-track)
+npm test              # Local HTML page (hover, jump, back-on-track)
 npm run test:edge     # Edge TTS iframe
-npm run test:docs     # Google Docs (cần mạng)
-npm run test:all      # Chạy cả 3
-npm run serve         # http://127.0.0.1:8765/ — thử tay
+npm run test:docs     # Google Docs (requires network)
+npm run test:all      # Run all 3 suites
+npm run serve         # http://127.0.0.1:8765/ — manual testing
 ```
 
-Trang thử local: chạy `npm run serve` rồi mở `http://127.0.0.1:8765/` (không mở file `page.html` trực tiếp).
+## Known Limitations
 
-## Giới hạn đã biết
-
-- **Brave:** TTS từ popup cần user gesture trên trang (nút xác nhận)
-- **Google Docs:** Canvas mode; extension dùng `_docs_annotate_canvas_by_ext` + SVG `aria-label` — có thể thay đổi khi Google cập nhật
-- **Highlight Docs:** ổn định nhất ở mức dòng/câu, không chính xác từng ký tự như HTML thuần
+- **Brave:** TTS from popup requires a user gesture on the page (confirmation button)
+- **Google Docs:** Canvas mode; extension uses `_docs_annotate_canvas_by_ext` + SVG `aria-label` — may change with Google updates
+- **Docs Highlight:** Stable at line/sentence level, not character-level precise like plain HTML
 
 ## License
 
-Dùng nội bộ / cá nhân. Icon và tên “Brave” không liên kết chính thức với Brave Software.
+Internal/personal use. The icon and "Brave" name are not officially affiliated with Brave Software.

@@ -233,7 +233,7 @@ function braveTtsNormalizeUiLang(uiLang) {
 
 function braveTtsT(key, uiLang = "vi", params = {}) {
   const lang = braveTtsNormalizeUiLang(uiLang);
-  let text = BRAVE_TTS_STRINGS[lang]?.[key] ?? BRAVE_TTS_STRINGS.vi[key] ?? key;
+  let text = BRAVE_TTS_STRINGS[lang]?.[key] ?? BRAVE_TTS_STRINGS.en[key] ?? key;
   for (const [name, value] of Object.entries(params)) {
     text = text.replaceAll(`{${name}}`, String(value));
   }

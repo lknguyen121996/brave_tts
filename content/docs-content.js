@@ -215,7 +215,14 @@
     };
     window.addEventListener("brave-tts-docs-text", onResult);
     window.dispatchEvent(new CustomEvent("brave-tts-docs-extract", { detail: { eventId } }));
-    window.removeEventListener("brave-tts-docs-text", onResult);
+    // NOTE: docs-page.js handler MUST run synchronously (it currently does).
+    // If payload is still null after dispatch, the handler may have become async.
+    // Keep listener alive briefly as safety net, then clean up.
+    if (payload !== null) {
+      window.removeEventListener("brave-tts-docs-text", onResult);
+    } else {
+      setTimeout(() => window.removeEventListener("brave-tts-docs-text", onResult), 100);
+    }
     return payload;
   }
 
