@@ -874,9 +874,11 @@
     }
 
     const targetY = window.scrollY + rect.top - window.innerHeight * 0.4;
+    // Always instant — smooth scrolling generates multiple scroll events
+    // that outlive the 80ms guard and re-trigger detachUserScrollIntent.
     window.scrollTo({
       top: Math.max(0, targetY),
-      behavior: force ? "smooth" : "auto",
+      behavior: "auto",
     });
   }
 
