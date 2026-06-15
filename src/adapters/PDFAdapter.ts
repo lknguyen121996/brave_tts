@@ -168,6 +168,8 @@ export class PDFAdapter implements IDocumentAdapter {
    * Called by the virtualiser when a page mounts.
    *
    * Creates LineObject divs (1 per line) instead of per-word divs.
+   * Uses chunked DocumentFragment rendering with requestIdleCallback
+   * to avoid blocking the main thread with ~2000 synchronous DOM inserts.
    *
    * @param pageNum 1-indexed page number
    * @param container The page container element (position: relative)
@@ -202,22 +204,13 @@ export class PDFAdapter implements IDocumentAdapter {
       "pointer-events: none; z-index: 1; contain: layout style;";
     overlay.setAttribute("data-brave-tts-page", String(pageNum));
 
-    for (const line of lines) {
-      const div = document.createElement("div");
-      div.id = line.id;
-      div.setAttribute("data-brave-tts-line", line.id);
-      div.style.cssText =
-        `position: absolute; ` +
-        `left: ${line.bbox.x}px; ` +
-        `top: ${line.bbox.y}px; ` +
-        `width: ${line.bbox.width}px; ` +
-        `height: ${line.bbox.height}px; ` +
-        // No textContent — pure visual rectangle container
-        "pointer-events: none;" +
-        "overflow: visible;"; // Allow spans to extend if needed
-      overlay.appendChild(div);
-      this.lineDivs.set(line.id, div);
-    }
+    // Append overlay to container BEFORE populating line divs,
+    // so it's in the DOM tree while chunked rendering fills it.
+    container.appendChild(overlay);
+
+    // Chunked render: ~2000 LineObject divs via DocumentFragment +
+    // requestIdleCallback to keep the main thread responsive.
+    this.renderLineChunk(lines, overlay);
 
     // ---- TextLayer (z-index: 2, opacity: 0) ----
     // Per-word spans for selection/copy/find
@@ -228,27 +221,15 @@ export class PDFAdapter implements IDocumentAdapter {
       "opacity: 0; z-index: 2;";
     textLayer.setAttribute("data-brave-tts-page", String(pageNum));
 
-    for (const word of words) {
-      const span = document.createElement("span");
-      span.id = `s_${word.id}`;
-      span.setAttribute("data-word-id", word.id);
-      span.textContent = word.text + " "; // Space between words for selection
-      span.style.cssText =
-        `position: absolute; ` +
-        `left: ${word.x}px; ` +
-        `top: ${word.y}px; ` +
-        `width: ${word.width}px; ` +
-        `height: ${word.height}px; ` +
-        "overflow: hidden;";
-      textLayer.appendChild(span);
-      this.textLayerSpans.set(word.id, span);
-    }
+    container.appendChild(textLayer);
+
+    // Chunked render: per-word spans (typically ~2000 nodes per page)
+    this.renderWordSpansChunked(words, textLayer, pageNum);
 
     page.textDivs = Array.from(textLayer.querySelectorAll("span"));
 
-    // Append in correct z-order: overlay (z:1) then textLayer (z:2)
-    container.appendChild(overlay);
-    container.appendChild(textLayer);
+    // Overlay should be below textLayer in z-order
+    // (already appended in correct order: overlay then textLayer)
     page.overlayEl = overlay;
 
     return overlay;
@@ -766,6 +747,131 @@ export class PDFAdapter implements IDocumentAdapter {
     `;
     document.head.appendChild(style);
     this.highlightStyleEl = style;
+  }
+
+  // ---- Private: Chunked DOM Rendering ----
+
+  /**
+   * Render LineObject divs in chunks using DocumentFragment +
+   * requestIdleCallback to avoid blocking the main thread with
+   * ~2000 synchronous DOM insertions.
+   *
+   * @param lines     LineObjects to render as positioned divs
+   * @param container Parent element to append line divs into
+   * @param chunkSize How many lines per idle callback frame (default: 50)
+   */
+  private renderLineChunk(
+    lines: LineObject[],
+    container: HTMLElement,
+    chunkSize = 50
+  ): void {
+    let index = 0;
+
+    const processChunk = (deadline?: IdleDeadline): void => {
+      const fragment = document.createDocumentFragment();
+      const end = Math.min(index + chunkSize, lines.length);
+
+      // Create and stage line divs into the DocumentFragment.
+      // Yield when deadline is available and time is running out.
+      while (
+        index < end &&
+        (deadline ? deadline.timeRemaining() > 1 : true)
+      ) {
+        const line = lines[index]!;
+        const div = document.createElement("div");
+        div.id = line.id;
+        div.setAttribute("data-brave-tts-line", line.id);
+        div.style.cssText =
+          `position: absolute; ` +
+          `left: ${line.bbox.x}px; ` +
+          `top: ${line.bbox.y}px; ` +
+          `width: ${line.bbox.width}px; ` +
+          `height: ${line.bbox.height}px; ` +
+          // No textContent — pure visual rectangle container
+          "pointer-events: none;" +
+          "overflow: visible;";
+        fragment.appendChild(div);
+        this.lineDivs.set(line.id, div);
+        index++;
+      }
+
+      // Single DOM operation: append the whole fragment
+      container.appendChild(fragment);
+
+      // Schedule next chunk if more lines remain
+      if (index < lines.length) {
+        if (typeof requestIdleCallback !== "undefined") {
+          requestIdleCallback(processChunk);
+        } else {
+          setTimeout(() => processChunk(), 0);
+        }
+      }
+    };
+
+    // Kick off first chunk
+    if (typeof requestIdleCallback !== "undefined") {
+      requestIdleCallback(processChunk);
+    } else {
+      setTimeout(() => processChunk(), 0);
+    }
+  }
+
+  /**
+   * Render per-word textLayer spans in chunks using the same
+   * DocumentFragment + requestIdleCallback strategy as lines.
+   *
+   * The textLayer is opacity: 0 and only used for selection/copy/find,
+   * so delayed rendering has zero visual impact.
+   */
+  private renderWordSpansChunked(
+    words: WordObject[],
+    container: HTMLElement,
+    pageNum: number,
+    chunkSize = 50
+  ): void {
+    let index = 0;
+
+    const processChunk = (deadline?: IdleDeadline): void => {
+      const fragment = document.createDocumentFragment();
+      const end = Math.min(index + chunkSize, words.length);
+
+      while (
+        index < end &&
+        (deadline ? deadline.timeRemaining() > 1 : true)
+      ) {
+        const word = words[index]!;
+        const span = document.createElement("span");
+        span.id = `s_${word.id}`;
+        span.setAttribute("data-word-id", word.id);
+        span.textContent = word.text + " ";
+        span.style.cssText =
+          `position: absolute; ` +
+          `left: ${word.x}px; ` +
+          `top: ${word.y}px; ` +
+          `width: ${word.width}px; ` +
+          `height: ${word.height}px; ` +
+          "overflow: hidden;";
+        fragment.appendChild(span);
+        this.textLayerSpans.set(word.id, span);
+        index++;
+      }
+
+      container.appendChild(fragment);
+
+      if (index < words.length) {
+        if (typeof requestIdleCallback !== "undefined") {
+          requestIdleCallback(processChunk);
+        } else {
+          setTimeout(() => processChunk(), 0);
+        }
+      }
+    };
+
+    if (typeof requestIdleCallback !== "undefined") {
+      requestIdleCallback(processChunk);
+    } else {
+      setTimeout(() => processChunk(), 0);
+    }
   }
 
   // ---- Private: ID Mapping & Search ----

@@ -41,7 +41,39 @@ class TtsManager {
   /** Tab ID of the content script that requested the current speech */
   private activeTabId: number | null = null;
 
+  /** Lookahead queue for pre-buffering the next utterance (max 1 entry) */
+  private nextQueue: string[] = [];
+  private readonly MAX_QUEUE_SIZE = 1;
+
+  /** Options cached for the queued next utterance */
+  private nextOptions: chrome.tts.SpeakOptions | null = null;
+
+  /** Tab ID cached for the queued next utterance */
+  private nextTabId: number | null = null;
+
   // ---- Public API ----
+
+  /**
+   * Queue the next utterance text for lookahead pre-buffering.
+   *
+   * Call this BEFORE the current utterance finishes so the TTS engine
+   * can pre-buffer the next sentence and eliminate inter-sentence gaps.
+   *
+   * @param text    — plain text or SSML (max 32k chars)
+   * @param options — voice, lang, rate, pitch, volume
+   * @param tabId   — tab to send TtsEvent messages to
+   */
+  queueNext(
+    text: string,
+    options: chrome.tts.SpeakOptions,
+    tabId: number
+  ): void {
+    if (this.nextQueue.length < this.MAX_QUEUE_SIZE) {
+      this.nextQueue.push(text);
+      this.nextOptions = options;
+      this.nextTabId = tabId;
+    }
+  }
 
   /**
    * Speak text via chrome.tts and forward events to the content script.
@@ -117,14 +149,19 @@ class TtsManager {
 
       try {
         chrome.tts.speak(safeText, { ...options, onEvent });
+        // Pre-buffer the next utterance if one was queued via queueNext()
+        this.tryPreBuffer();
       } catch (err) {
         reject(err);
       }
     });
   }
 
-  /** Stop current speech and invalidate the token */
+  /** Stop current speech, clear lookahead queue, and invalidate the token */
   stop(): void {
+    this.nextQueue = [];
+    this.nextOptions = null;
+    this.nextTabId = null;
     this.stopInternal();
     chrome.tts.stop();
   }
@@ -136,8 +173,11 @@ class TtsManager {
     });
   }
 
-  /** Reset all internal state */
+  /** Reset all internal state including lookahead queue */
   destroy(): void {
+    this.nextQueue = [];
+    this.nextOptions = null;
+    this.nextTabId = null;
     this.stop();
     this.activeTabId = null;
   }
@@ -153,6 +193,61 @@ class TtsManager {
   }
 
   // ---- Private ----
+
+  /**
+   * Dequeue and pre-buffer the next utterance via chrome.tts with
+   * enqueue: true, so the TTS engine can start it immediately after
+   * the current utterance finishes — eliminating inter-sentence gaps.
+   *
+   * The queued utterance shares the current token for event forwarding.
+   * If stop() is called before it plays, chrome.tts.stop() clears the
+   * engine queue and the token is bumped, so stale events are discarded.
+   */
+  private tryPreBuffer(): void {
+    const nextText = this.nextQueue.shift();
+    if (!nextText || !this.nextOptions || this.nextTabId === null) return;
+
+    const tabId = this.nextTabId;
+    const token = this.token;
+
+    const safeText =
+      nextText.length > MAX_UTTERANCE_LENGTH
+        ? nextText.slice(0, MAX_UTTERANCE_LENGTH)
+        : nextText;
+
+    const onEvent = (event: chrome.tts.TtsEvent): void => {
+      // Discard events if stop() invalidated the token
+      if (token !== this.token) return;
+
+      const eventType =
+        EVENT_TYPE_MAP[event.type] || (event.type as TtsEventType);
+
+      const message: TtsEventMessage = {
+        type: "TTS_EVENT",
+        eventType,
+      };
+      if (event.charIndex !== undefined && event.charIndex >= 0) {
+        message.charIndex = event.charIndex;
+      }
+      if (event.length !== undefined && event.length >= 0) {
+        message.charLength = event.length;
+      }
+      if (event.errorMessage) {
+        message.error = event.errorMessage;
+      }
+
+      chrome.tabs.sendMessage(tabId, message).catch(() => {});
+    };
+
+    chrome.tts.speak(safeText, {
+      ...this.nextOptions,
+      enqueue: true,
+      onEvent,
+    });
+
+    this.nextOptions = null;
+    this.nextTabId = null;
+  }
 
   private stopInternal(): void {
     this.token += 1;

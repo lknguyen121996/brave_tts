@@ -85,6 +85,21 @@ export class HTMLAdapter implements IDocumentAdapter {
   /** <mark> elements created as fallback (for clearHighlight) */
   private markElements: HTMLElement[] = [];
 
+  /** CSS Custom Highlight API object — created once & reused across highlight() calls */
+  private highlightObject: Highlight | null = null;
+
+  /** Cache of Range objects keyed by payload ID — avoids GC pressure from repeated allocation */
+  private activeRanges = new Map<string, Range>();
+
+  /** Whether the Highlight has been registered with CSS.highlights */
+  private highlightRegistered = false;
+
+  constructor() {
+    if (this.supportsCssHighlights()) {
+      this.highlightObject = new Highlight();
+    }
+  }
+
   // ---- Visibility helpers ----
 
   private isVisible(el: Element): boolean {
@@ -181,6 +196,7 @@ export class HTMLAdapter implements IDocumentAdapter {
 
     // Split each text node into sentence payloads
     this.offsetMap.clear();
+    this.activeRanges.clear(); // Invalidate cached ranges — DOM may have changed
     const payloads: TextNodePayload[] = [];
     let globalIndex = 0;
     let idCounter = 0;
@@ -250,8 +266,46 @@ export class HTMLAdapter implements IDocumentAdapter {
     this.clearHighlight();
     this.activeHighlightIds = new Set(nodeIds);
 
-    const ranges: Range[] = [];
+    // Lazy one-time registration of the Highlight object with CSS.highlights
+    if (this.highlightObject && !this.highlightRegistered) {
+      try {
+        CSS.highlights.set("brave-tts-reading", this.highlightObject);
+        this.highlightRegistered = true;
+      } catch {
+        // ignore
+      }
+    }
 
+    // CSS Custom Highlight path — reuse cached Ranges and shared Highlight object
+    if (this.highlightObject) {
+      for (const id of nodeIds) {
+        const offset = this.offsetMap.get(id);
+        if (!offset) continue;
+
+        try {
+          let range = this.activeRanges.get(id);
+          if (range) {
+            // Update existing range boundaries — no GC allocation
+            range.setStart(offset.node, offset.startInNode);
+            range.setEnd(offset.node, offset.endInNode);
+          } else {
+            // First time seeing this ID: create Range and cache it
+            range = document.createRange();
+            range.setStart(offset.node, offset.startInNode);
+            range.setEnd(offset.node, offset.endInNode);
+            this.activeRanges.set(id, range);
+          }
+          this.highlightObject.add(range);
+        } catch {
+          // Node may have been removed from the DOM — evict stale cache entry
+          this.activeRanges.delete(id);
+        }
+      }
+      return;
+    }
+
+    // <mark> fallback — build fresh ranges (surroundContents mutates DOM, so caching not useful)
+    const ranges: Range[] = [];
     for (const id of nodeIds) {
       const offset = this.offsetMap.get(id);
       if (!offset) continue;
@@ -262,35 +316,20 @@ export class HTMLAdapter implements IDocumentAdapter {
         range.setEnd(offset.node, offset.endInNode);
         ranges.push(range);
       } catch {
-        // Node may have been removed from the DOM
+        // Node may have been removed
       }
     }
 
     if (ranges.length === 0) return;
-
-    // Prefer CSS Custom Highlight API
-    if (this.supportsCssHighlights()) {
-      try {
-        const highlight = new Highlight(...ranges);
-        CSS.highlights.set("brave-tts-reading", highlight);
-        return;
-      } catch {
-        // Fall through to <mark> fallback
-      }
-    }
-
-    // <mark> fallback for older browsers
     this.applyMarkFallback(ranges);
   }
 
   clearHighlight(): void {
     this.activeHighlightIds.clear();
 
-    // Clear CSS Custom Highlight
-    try {
-      CSS.highlights?.delete("brave-tts-reading");
-    } catch {
-      // ignore
+    // Clear ranges from the shared Highlight object (keep it registered)
+    if (this.highlightObject) {
+      this.highlightObject.clear();
     }
 
     // Clear <mark> elements
@@ -302,6 +341,36 @@ export class HTMLAdapter implements IDocumentAdapter {
       }
     }
     this.markElements = [];
+  }
+
+  /**
+   * Full cleanup: remove Highlight from CSS.highlights, clear all caches,
+   * and reset adapter state. Call when the adapter is no longer needed
+   * (e.g. on STOP_READING or before starting a new reading session).
+   */
+  destroy(): void {
+    this.clearHighlight();
+
+    // Remove from CSS.highlights registry
+    if (this.highlightRegistered) {
+      try {
+        CSS.highlights.delete("brave-tts-reading");
+      } catch {
+        // ignore
+      }
+      this.highlightRegistered = false;
+    }
+
+    // Clear Range cache
+    this.activeRanges.clear();
+
+    // Reset internal state
+    this.offsetMap.clear();
+    this.payloads = [];
+    this.lookupTable = [];
+    this.fullText = "";
+    this.root = null;
+    this.highlightObject = null;
   }
 
   // ---- Scroll ----
